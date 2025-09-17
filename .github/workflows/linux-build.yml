@@ -1,0 +1,84 @@
+name: linux-build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: linux-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    env:
+      VULKAN_SDK_VERSION: 1.4.321.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install base deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential python3 git cmake ninja-build pkg-config libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libxkbcommon-dev
+
+      - name: Prepare Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: ${{ env.VULKAN_SDK_VERSION }}
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
+          vulkan-use-cache: true
+
+      - name: Verify Vulkan tools
+        run: |
+          echo "VULKAN_SDK=$VULKAN_SDK"
+          test -x "$VULKAN_SDK/bin/glslc" || (echo 'glslc missing' && exit 1)
+          "$VULKAN_SDK/bin/glslc" --version
+          if command -v vulkaninfo >/dev/null 2>&1; then vulkaninfo | grep -m1 'Vulkan Instance Version' || true; fi
+
+      - name: Cache third-party downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+          key: deps-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt', 'cmake/*.cmake') }}
+          restore-keys: |
+            deps-${{ runner.os }}-${{ matrix.build_type }}-
+            deps-${{ runner.os }}-
+
+      - name: Configure (${{ matrix.build_type }})
+        run: |
+          cmake -S . -B build -G Ninja -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build (${{ matrix.build_type }})
+        run: |
+          cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Package artifacts (${{ matrix.build_type }})
+        if: success()
+        run: |
+          mkdir -p artifacts
+          EXE=build/examples/basic_window
+          [ -f "$EXE" ] && cp "$EXE" artifacts/
+          LIB=build/libvulkan_visualizer.a
+          [ -f "$LIB" ] && cp "$LIB" artifacts/
+
+      - name: Upload artifacts (${{ matrix.build_type }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.build_type }}-output
+          path: artifacts
+          if-no-files-found: error
+
+      - name: Shader dir list (${{ matrix.build_type }})
+        if: success()
+        run: |
+          ls -al build/examples/shaders || echo 'No shaders dir'
+
