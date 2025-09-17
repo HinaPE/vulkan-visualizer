@@ -102,7 +102,7 @@ set(SDL3_ROOT "${_sdl_install_dir}" CACHE PATH "SDL3 install prefix" FORCE)
 list(PREPEND CMAKE_PREFIX_PATH "${_sdl_install_dir}")
 
 if(NOT TARGET SDL3::SDL3)
-    find_package(SDL3 CONFIG REQUIRED PATHS "${SDL3_DIR}" NO_DEFAULT_PATH)
+    find_package(SDL3 CONFIG REQUIRED)
 endif()
 
 function(use_sdl3 TARGET_NAME)
