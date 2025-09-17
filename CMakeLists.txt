@@ -66,7 +66,7 @@ target_include_directories(${libname} PUBLIC
 # Link dependencies
 # External helper macros attach their own include/link settings
 # =========================================================
-target_link_libraries(${libname} PRIVATE Vulkan::Vulkan)
+target_link_libraries(${libname} PUBLIC Vulkan::Vulkan)
 use_imgui(${libname})
 use_sdl3(${libname})
 use_vkbootstrap(${libname})

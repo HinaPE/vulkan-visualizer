@@ -354,8 +354,7 @@ void VulkanEngine::init() {
     }
 
     state_.initialized      = true;
-    state_.running          = true;
-    state_.should_rendering = true;
+    state_.should_rendering = true; // defer setting running flag until run()
 }
 
 // ============================================================================
@@ -364,6 +363,9 @@ void VulkanEngine::init() {
 // builds frame contexts, records rendering + UI, submits & presents.
 // ============================================================================
 void VulkanEngine::run() {
+    // Ensure running state is enabled when entering the loop
+    if (!state_.running) state_.running = true;
+    if (!state_.should_rendering) state_.should_rendering = true;
     using clock = std::chrono::steady_clock;
     auto t0     = clock::now();
     auto t_prev = t0;
