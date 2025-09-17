@@ -16,11 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install CMake (>=3.26)
-        run: |
-          choco install cmake --version=3.29.6 -y --installargs 'ADD_CMAKE_TO_PATH=System'
-        shell: powershell
-
       - name: Download & Install Vulkan SDK (pinned)
         run: |
           $ErrorActionPreference = 'Stop'
