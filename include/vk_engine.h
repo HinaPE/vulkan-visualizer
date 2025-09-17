@@ -281,7 +281,7 @@ private: // --- Command Submission & Synchronization ---
         VkSemaphore imageAcquired{};          // Signals when swapchain image is ready
         VkSemaphore renderComplete{};         // Signals when rendering finished
         uint64_t submitted_timeline_value{0}; // Last timeline value signaled for this frame
-        std::vector<std::move_only_function<void()>> dq; // Deferred destruction queue (frame-scoped)
+        std::vector<std::function<void()>> dq; // Deferred destruction queue (frame-scoped)
     } frames_[FRAME_OVERLAP]{};               // Ring buffer of per-frame resources
 
     VkSemaphore render_timeline_{};           // Timeline semaphore for frame completion
@@ -298,7 +298,7 @@ private: // --- ImGui Integration ---
     void create_imgui();
     void destroy_imgui();
     std::unique_ptr<UiSystem> ui_;            // ImGui system object
-    std::vector<std::move_only_function<void()>> mdq_; // Master destruction queue (engine lifetime)
+    std::vector<std::function<void()>> mdq_; // Master destruction queue (engine lifetime)
 };
 
 #endif // VULKAN_VISUALIZER_VK_ENGINE_H
