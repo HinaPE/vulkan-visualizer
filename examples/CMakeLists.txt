@@ -46,13 +46,15 @@ target_compile_definitions(basic_window PRIVATE
         SHADER_SOURCE_DIR="${EXAMPLE_SHADER_SOURCE_DIR}"
 )
 
-# Link against engine library
+# Link against engine library (transitively pulls Vulkan / SDL3 etc.)
 target_link_libraries(basic_window PRIVATE vulkan_visualizer)
 
-# Copy SPIR-V to runtime folder after build for convenience
-add_custom_command(TARGET basic_window POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:basic_window>/shaders
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${SHADER_BIN_DIR} $<TARGET_FILE_DIR:basic_window>/shaders
-        COMMENT "Copying compiled shaders to runtime directory"
-)
-
+# Post-build: copy dependent runtime DLLs (Windows only)
+if (WIN32)
+    add_custom_command(TARGET basic_window POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:basic_window>
+            $<TARGET_FILE_DIR:basic_window>
+        COMMAND_EXPAND_LISTS
+    )
+endif ()
