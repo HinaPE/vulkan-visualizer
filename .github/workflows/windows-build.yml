@@ -42,14 +42,6 @@ jobs:
           cache: true
           quiet: true
 
-      - name: Verify Vulkan / glslc
-        shell: powershell
-        run: |
-          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
-          if (-not (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe")) { Write-Error 'glslc not found in Vulkan SDK Bin'; exit 1 }
-          & "$env:VULKAN_SDK\Bin\glslc.exe" --version
-          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) { vulkaninfo | Select-String -Pattern 'Vulkan Instance Version' }
-
       - name: Configure (multi-config VS)
         shell: powershell
         run: |

@@ -39,13 +39,6 @@ jobs:
           cache: true
           quiet: true
 
-      - name: Verify Vulkan / glslc
-        run: |
-          echo "VULKAN_SDK=$VULKAN_SDK"
-          test -x "$VULKAN_SDK/bin/glslc" || (echo 'ERROR: glslc missing' && exit 1)
-          "$VULKAN_SDK/bin/glslc" --version
-          if command -v vulkaninfo >/dev/null 2>&1; then vulkaninfo | grep -m1 'Vulkan Instance Version' || true; fi
-
       - name: Cache third-party downloads
         uses: actions/cache@v4
         with:
