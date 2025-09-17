@@ -83,9 +83,11 @@ set(MSVC_RELEASE_OPTIONS
         /O2 /Ot /Oi /GL /fp:fast /arch:AVX2
 )
 
-set(GCC_CLANG_RELEASE_OPTIONS
-        -O3 -ffast-math -fomit-frame-pointer -march=native -mavx2 -mfma
-)
+set(GCC_CLANG_RELEASE_OPTIONS_BASE -O3 -ffast-math -fomit-frame-pointer)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|AMD64")
+    list(APPEND GCC_CLANG_RELEASE_OPTIONS_BASE -march=native -mavx2 -mfma)
+endif ()
+set(GCC_CLANG_RELEASE_OPTIONS ${GCC_CLANG_RELEASE_OPTIONS_BASE})
 
 target_compile_options(${libname} PRIVATE
         $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:${MSVC_RELEASE_OPTIONS}>
