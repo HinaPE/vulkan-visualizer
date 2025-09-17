@@ -19,7 +19,7 @@ jobs:
       matrix:
         build_type: [Release, Debug]
     env:
-      VULKAN_SDK_VERSION: 1.4.321.1
+      VULKAN_SDK_VERSION: 1.4.304.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
         uses: humbletim/setup-vulkan-sdk@v1.2.1
         with:
           vulkan-query-version: ${{ env.VULKAN_SDK_VERSION }}
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, MoltenVK, Glslang, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, MoltenVK, Glslang, shaderc, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
           vulkan-use-cache: true
 
       - name: Verify Vulkan tools

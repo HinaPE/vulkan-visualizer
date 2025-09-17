@@ -38,7 +38,7 @@ jobs:
         uses: humbletim/setup-vulkan-sdk@v1.2.1
         with:
           vulkan-query-version: ${{ env.VULKAN_SDK_VERSION }}
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, shaderc, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
           vulkan-use-cache: true
 
       - name: Verify Vulkan tools

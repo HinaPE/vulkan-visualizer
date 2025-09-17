@@ -201,12 +201,6 @@ public:
     // Provide ownership of renderer implementation before init().
     void set_renderer(std::unique_ptr<IRenderer> r);
 
-    // Helper accessors for C ABI bridge (non-stable, internal use).
-    EngineContext export_engine_context() const { return make_engine_context(); }
-    FrameContext export_frame_context_current() const { return make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent); }
-    RendererStats export_renderer_stats() const { return renderer_ ? renderer_->get_stats() : RendererStats{}; }
-    RendererCaps  export_renderer_caps() const { return renderer_caps_; }
-
     // Mutable engine-wide state (lightweight). Public for debug readability.
     struct {
         std::string name = "Vulkan Engine"; // Window / application title
