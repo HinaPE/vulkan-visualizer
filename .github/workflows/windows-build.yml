@@ -34,7 +34,7 @@ jobs:
             deps-${{ runner.os }}-
 
       - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.0.3
+        uses: jakoch/install-vulkan-sdk-action@v1.2.5
         with:
           version: ${{ env.VULKAN_SDK_VERSION }}
           # 需要 glslc -> Glslang; 需要 SPIRV-Tools; Headers & Loader 基础

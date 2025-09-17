@@ -32,7 +32,7 @@ jobs:
           ninja --version || true
 
       - name: Install Vulkan SDK (MoltenVK)
-        uses: jakoch/install-vulkan-sdk-action@v1.0.3
+        uses: jakoch/install-vulkan-sdk-action@v1.2.5
         with:
           version: ${{ env.VULKAN_SDK_VERSION }}
           components: Vulkan-Headers,Vulkan-Loader,MoltenVK,Glslang,SPIRV-Tools,SPIRV-Headers

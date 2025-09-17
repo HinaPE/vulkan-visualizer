@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y build-essential python3 git cmake ninja-build pkg-config libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libxkbcommon-dev
 
       - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.0.3
+        uses: jakoch/install-vulkan-sdk-action@v1.2.5
         with:
           version: ${{ env.VULKAN_SDK_VERSION }}
           components: Vulkan-Headers,Vulkan-Loader,Glslang,SPIRV-Tools,SPIRV-Headers
