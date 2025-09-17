@@ -45,6 +45,7 @@ set(libname vulkan_visualizer)
 
 set(${libname}_SOURCES
         src/vk_engine.cpp
+        src/vk_abi.cpp
 )
 
 add_library(${libname} SHARED
@@ -56,7 +57,7 @@ add_library(${libname} SHARED
 # BUILD_INTERFACE: during build
 # INSTALL_INTERFACE: after install
 # =========================================================
-target_include_directories(${libname} PRIVATE
+target_include_directories(${libname} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
@@ -91,6 +92,9 @@ target_compile_options(${libname} PRIVATE
         $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:${MSVC_RELEASE_OPTIONS}>
         $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:${GCC_CLANG_RELEASE_OPTIONS}>
 )
+
+# Export macro for ABI when building shared lib
+target_compile_definitions(${libname} PRIVATE VKVIZ_BUILD_DLL)
 
 # =========================================================
 # Optional examples
