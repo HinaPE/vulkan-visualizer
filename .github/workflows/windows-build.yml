@@ -24,69 +24,64 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache third-party downloads (_deps archives)
+      - name: Cache third-party downloads (_deps)
         uses: actions/cache@v4
         with:
-          path: |
-            build/_deps
-          key: deps-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt', 'cmake/*.cmake') }}
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt','cmake/*.cmake') }}
           restore-keys: |
             deps-${{ runner.os }}-${{ matrix.build_type }}-
             deps-${{ runner.os }}-
 
-      - name: Prepare Vulkan SDK
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.0.3
         with:
-          vulkan-query-version: ${{ env.VULKAN_SDK_VERSION }}
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, shaderc, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
-          vulkan-use-cache: true
+          version: ${{ env.VULKAN_SDK_VERSION }}
+          # 需要 glslc -> Glslang; 需要 SPIRV-Tools; Headers & Loader 基础
+          components: Vulkan-Headers,Vulkan-Loader,Glslang,SPIRV-Tools,SPIRV-Headers
+          cache: true
+          quiet: true
 
-      - name: Verify Vulkan tools
-        run: |
-          echo "VULKAN_SDK=$env:VULKAN_SDK"
-          if (-not (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe")) { Write-Error 'glslc not found'; exit 1 }
-          & "$env:VULKAN_SDK\Bin\glslc.exe" --version
-          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
-            vulkaninfo | Select-String -Pattern 'Vulkan Instance Version'
-          } else {
-            Write-Warning 'vulkaninfo not in PATH';
-          }
+      - name: Verify Vulkan / glslc
         shell: powershell
+        run: |
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+          if (-not (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe")) { Write-Error 'glslc not found in Vulkan SDK Bin'; exit 1 }
+          & "$env:VULKAN_SDK\Bin\glslc.exe" --version
+          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) { vulkaninfo | Select-String -Pattern 'Vulkan Instance Version' }
 
-      - name: Configure (multi-config generator)
+      - name: Configure (multi-config VS)
+        shell: powershell
         run: |
           cmake -S . -B build -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON
-        shell: powershell
 
       - name: Build (${{ matrix.build_type }})
+        shell: powershell
         run: |
           cmake --build build --config ${{ matrix.build_type }} --parallel
-        shell: powershell
 
       - name: Package artifacts (${{ matrix.build_type }})
         if: success()
+        shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $cfg='${{ matrix.build_type }}'
-          $examplePath = "build/examples/$cfg/basic_window.exe"
-          if (Test-Path $examplePath) { Copy-Item $examplePath artifacts/ -Force }
-          $sdl = "build/examples/$cfg/SDL3.dll"
-          if (Test-Path $sdl) { Copy-Item $sdl artifacts/ }
-          $lib = "build/$cfg/vulkan_visualizer.lib"
-          if (Test-Path $lib) { Copy-Item $lib artifacts/ }
-          $pdb = "build/$cfg/vulkan_visualizer.pdb"
-          if (Test-Path $pdb) { Copy-Item $pdb artifacts/ }
-        shell: powershell
+          $exe = "build/examples/$cfg/basic_window.exe"
+          if (Test-Path $exe) { Copy-Item $exe artifacts/ }
+          $sdl = "build/examples/$cfg/SDL3.dll"; if (Test-Path $sdl) { Copy-Item $sdl artifacts/ }
+          $lib = "build/$cfg/vulkan_visualizer.lib"; if (Test-Path $lib) { Copy-Item $lib artifacts/ }
+          $pdb = "build/$cfg/vulkan_visualizer.pdb"; if (Test-Path $pdb) { Copy-Item $pdb artifacts/ }
+          if (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe") { Copy-Item "$env:VULKAN_SDK\Bin\glslc.exe" artifacts/ }
 
       - name: Upload artifacts (${{ matrix.build_type }})
         uses: actions/upload-artifact@v4
         with:
-          name: windows-${{ matrix.build_type }}-output
+          name: windows-${{ matrix.build_type }}
           path: artifacts
           if-no-files-found: error
 
-      - name: Shader directory list (${{ matrix.build_type }})
+      - name: List shaders dir (${{ matrix.build_type }})
         if: success()
-        run: |
-          if (Test-Path build/examples/shaders) { Get-ChildItem build/examples/shaders } else { echo 'No shaders directory present.' }
         shell: powershell
+        run: |
+          if (Test-Path build/examples/shaders) { Get-ChildItem build/examples/shaders } else { Write-Host 'No shaders directory.' }

@@ -2,9 +2,9 @@ name: linux-build
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master, main ]
   pull_request:
-    branches: [master, main]
+    branches: [ master, main ]
   workflow_dispatch: {}
 
 concurrency:
@@ -29,26 +29,26 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y build-essential python3 git cmake ninja-build pkg-config libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libxkbcommon-dev
 
-      - name: Prepare Vulkan SDK
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.0.3
         with:
-          vulkan-query-version: ${{ env.VULKAN_SDK_VERSION }}
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, shaderc, SPIRV-Tools, SPIRV-Headers, SPIRV-Cross, SPIRV-Reflect
-          vulkan-use-cache: true
+          version: ${{ env.VULKAN_SDK_VERSION }}
+          components: Vulkan-Headers,Vulkan-Loader,Glslang,SPIRV-Tools,SPIRV-Headers
+          cache: true
+          quiet: true
 
-      - name: Verify Vulkan tools
+      - name: Verify Vulkan / glslc
         run: |
           echo "VULKAN_SDK=$VULKAN_SDK"
-          test -x "$VULKAN_SDK/bin/glslc" || (echo 'glslc missing' && exit 1)
+          test -x "$VULKAN_SDK/bin/glslc" || (echo 'ERROR: glslc missing' && exit 1)
           "$VULKAN_SDK/bin/glslc" --version
           if command -v vulkaninfo >/dev/null 2>&1; then vulkaninfo | grep -m1 'Vulkan Instance Version' || true; fi
 
       - name: Cache third-party downloads
         uses: actions/cache@v4
         with:
-          path: |
-            build/_deps
-          key: deps-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt', 'cmake/*.cmake') }}
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('CMakeLists.txt','cmake/*.cmake') }}
           restore-keys: |
             deps-${{ runner.os }}-${{ matrix.build_type }}-
             deps-${{ runner.os }}-
@@ -69,11 +69,12 @@ jobs:
           [ -f "$EXE" ] && cp "$EXE" artifacts/
           LIB=build/libvulkan_visualizer.a
           [ -f "$LIB" ] && cp "$LIB" artifacts/
+          [ -f "$VULKAN_SDK/bin/glslc" ] && cp "$VULKAN_SDK/bin/glslc" artifacts/
 
       - name: Upload artifacts (${{ matrix.build_type }})
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.build_type }}-output
+          name: linux-${{ matrix.build_type }}
           path: artifacts
           if-no-files-found: error
 
@@ -81,4 +82,3 @@ jobs:
         if: success()
         run: |
           ls -al build/examples/shaders || echo 'No shaders dir'
-
