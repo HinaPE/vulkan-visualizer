@@ -19,6 +19,7 @@ jobs:
         with:
           vulkan_version: 1.4.321.1
           install_runtime: false
+          install_tools: true
           cache: true
 
       - name: Verify Vulkan tools
