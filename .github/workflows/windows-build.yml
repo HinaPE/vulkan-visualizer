@@ -10,35 +10,16 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      VULKAN_SDK_VERSION: 1.4.321.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download & Install Vulkan SDK (pinned)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = $env:VULKAN_SDK_VERSION
-          $url = "https://sdk.lunarg.com/sdk/download/$version/windows/VulkanSDK-$version-Installer.exe?Human=true"
-          $fallbackUrl = "https://sdk.lunarg.com/sdk/download/$version/windows/VulkanSDK-$version-Installer.exe"
-          $dst = Join-Path $env:RUNNER_TEMP "VulkanSDK-$version.exe"
-          Write-Host "Downloading Vulkan SDK $version from $url"
-          try {
-            Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 600
-          } catch {
-            Write-Warning "Primary URL failed, trying fallback URL"
-            Invoke-WebRequest -Uri $fallbackUrl -OutFile $dst -UseBasicParsing -TimeoutSec 600
-          }
-          if (-not (Test-Path $dst)) { Write-Error "Vulkan SDK installer download failed"; exit 1 }
-          Write-Host "Running silent install..."
-          Start-Process -FilePath $dst -ArgumentList '/S' -Wait -NoNewWindow
-          $sdkRoot = "C:\VulkanSDK\$version"
-          if (-not (Test-Path $sdkRoot)) { Get-ChildItem C:\VulkanSDK -ErrorAction SilentlyContinue; Write-Error "Vulkan SDK path $sdkRoot not found after install"; exit 1 }
-          # Export environment
-          echo "VULKAN_SDK=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "$sdkRoot\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        shell: powershell
+      - name: Setup Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1
+        with:
+          vulkan_version: 1.4.321.1
+          install_runtime: false
+          cache: true
 
       - name: Verify Vulkan tools
         run: |
