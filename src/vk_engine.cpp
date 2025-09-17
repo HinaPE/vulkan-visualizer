@@ -1,4 +1,15 @@
+// ============================================================================
+// Vulkan Visualizer - vk_engine.cpp
+// Implementation of the VulkanEngine: context/device creation, swapchain &
+// offscreen targets management, frame loop, command submission, ImGui
+// integration, and renderer delegation.
+//
+// NOTE: All logic preserved; only comments / structure annotations added for
+// clarity and onboarding. Public API documented in vk_engine.h.
+// ============================================================================
 #include "vk_engine.h"
+
+// --- Compiler diagnostics silencing for third‑party code & VMA implementation
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4100 4189 4127 4324)
@@ -24,6 +35,8 @@
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+
+// --- External dependencies
 #include "VkBootstrap.h"
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_vulkan.h"
@@ -31,10 +44,16 @@
 #include <array>
 #include <imgui.h>
 #include <ranges>
+#include <chrono>
+#include <stdexcept>
+
 // ============================================================================
-// Utility Macros
+// Utility Macros (minimal, self‑contained)
+// VK_CHECK            : Throws std::runtime_error on non-success VkResult.
+// IF_NOT_NULL_DO      : Execute statement if pointer / handle non-null.
+// IF_NOT_NULL_DO_AND_SET : Execute statement then overwrite handle with value.
+// REQUIRE_TRUE        : Runtime assertion that throws with message.
 // ============================================================================
-// clang-format off
 #ifndef VK_CHECK
 #define VK_CHECK(x) do { VkResult _vk_check_res = (x); if (_vk_check_res != VK_SUCCESS) { throw std::runtime_error(std::string("Vulkan error ") + std::to_string(_vk_check_res) + " at " #x); } } while (false)
 #endif
@@ -47,14 +66,16 @@
 #ifndef REQUIRE_TRUE
 #define REQUIRE_TRUE(expr, msg) do { if (!(expr)) { throw std::runtime_error(std::string("Check failed: ") + #expr + " | " + (msg)); } } while (false)
 #endif
-// clang-format on
 
 // ============================================================================
-// Dear ImGui Integration Helpers
+// Internal: ImGui / UI System Wrapper
+// Encapsulates descriptor pool + ImGui backend initialization for SDL3 + Vulkan
+// with dynamic rendering. Provides panel registration & overlay rendering.
 // ============================================================================
 struct VulkanEngine::UiSystem {
     using PanelFn = std::function<void()>;
 
+    // Initialize ImGui context & Vulkan backend resources.
     bool init(SDL_Window* window, VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue graphicsQueue, uint32_t graphicsQueueFamily, VkFormat swapchainFormat, uint32_t swapchainImageCount) {
         std::array<VkDescriptorPoolSize, 11> pool_sizes{{
             {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
@@ -101,7 +122,7 @@ struct VulkanEngine::UiSystem {
             return false;
         }
 
-        ImGui_ImplVulkan_InitInfo init_info{};
+        ImGui_ImplVulkan_InitInfo init_info{}; // Standard ImGui Vulkan init structure
         init_info.ApiVersion          = VK_API_VERSION_1_3;
         init_info.Instance            = instance;
         init_info.PhysicalDevice      = physicalDevice;
@@ -140,6 +161,7 @@ struct VulkanEngine::UiSystem {
         return true;
     }
 
+    // Release all ImGui/Vulkan backend resources.
     void shutdown(VkDevice device) {
         if (!initialized_) return;
         ImGui_ImplVulkan_Shutdown();
@@ -152,11 +174,13 @@ struct VulkanEngine::UiSystem {
         initialized_ = false;
     }
 
+    // Forward SDL events to ImGui.
     void process_event(const SDL_Event* e) const {
         if (!initialized_ || !e) return;
         ImGui_ImplSDL3_ProcessEvent(e);
     }
 
+    // Start a new ImGui frame & invoke registered panels.
     void new_frame() const {
         if (!initialized_) return;
         ImGui_ImplVulkan_NewFrame();
@@ -167,9 +191,11 @@ struct VulkanEngine::UiSystem {
         }
     }
 
+    // Record overlay rendering to the swapchain image (dynamic rendering path).
     void render_overlay(VkCommandBuffer cmd, VkImage swapchainImage, VkImageView swapchainView, VkExtent2D extent, VkImageLayout previousLayout) const {
         if (!initialized_) return;
 
+        // Transition image to COLOR_ATTACHMENT for ImGui draw
         VkImageMemoryBarrier2 to_color{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .pNext            = nullptr,
@@ -195,6 +221,7 @@ struct VulkanEngine::UiSystem {
         };
         vkCmdPipelineBarrier2(cmd, &dep_color);
 
+        // Dynamic rendering begin
         VkRenderingAttachmentInfo color_attachment{
             .sType              = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .pNext              = nullptr,
@@ -226,12 +253,14 @@ struct VulkanEngine::UiSystem {
 
         vkCmdEndRendering(cmd);
 
+        // Multi-viewport rendering
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
 
+        // Transition image for presentation
         VkImageMemoryBarrier2 to_present{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .pNext            = nullptr,
@@ -258,24 +287,24 @@ struct VulkanEngine::UiSystem {
         vkCmdPipelineBarrier2(cmd, &dep_present);
     }
 
-    void add_panel(PanelFn fn) {
-        panels_.push_back(std::move(fn));
-    }
+    // Register an ImGui panel callback executed every frame.
+    void add_panel(PanelFn fn) { panels_.push_back(std::move(fn)); }
 
+    // Update backend min image count after swapchain recreation.
     void set_min_image_count(uint32_t count) const {
         if (!initialized_) return;
         ImGui_ImplVulkan_SetMinImageCount(count);
     }
 
 private:
-    VkDescriptorPool pool_{VK_NULL_HANDLE};
-    bool initialized_{false};
-    VkFormat color_format_{};
-    std::vector<PanelFn> panels_;
+    VkDescriptorPool pool_{VK_NULL_HANDLE}; // ImGui descriptor pool
+    bool initialized_{false};               // Init flag
+    VkFormat color_format_{};               // Cached color format
+    std::vector<PanelFn> panels_;           // Registered UI panels
 };
 
 // ============================================================================
-// DescriptorAllocator Implementation
+// DescriptorAllocator Implementation (simple single-pool helper)
 // ============================================================================
 void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios) {
     maxSets = std::max(1u, maxSets);
@@ -288,23 +317,22 @@ void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span
     const VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .pNext = nullptr, .flags = 0u, .maxSets = maxSets, .poolSizeCount = static_cast<uint32_t>(sizes.size()), .pPoolSizes = sizes.data()};
     VK_CHECK(vkCreateDescriptorPool(device, &info, nullptr, &pool));
 }
-void DescriptorAllocator::clear_descriptors(VkDevice device) const {
-    if (pool) vkResetDescriptorPool(device, pool, 0);
-}
-void DescriptorAllocator::destroy_pool(VkDevice device) const {
-    if (pool) vkDestroyDescriptorPool(device, pool, nullptr);
-}
+void DescriptorAllocator::clear_descriptors(VkDevice device) const { if (pool) vkResetDescriptorPool(device, pool, 0); }
+void DescriptorAllocator::destroy_pool(VkDevice device) const { if (pool) vkDestroyDescriptorPool(device, pool, nullptr); }
 VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLayout layout) const {
     const VkDescriptorSetAllocateInfo ai{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .pNext = nullptr, .descriptorPool = pool, .descriptorSetCount = 1u, .pSetLayouts = &layout};
-    VkDescriptorSet ds{};
-    VK_CHECK(vkAllocateDescriptorSets(device, &ai, &ds));
-    return ds;
-}
+    VkDescriptorSet ds{}; VK_CHECK(vkAllocateDescriptorSets(device, &ai, &ds)); return ds; }
 
+// ============================================================================
+// VulkanEngine: Ctors / Dtors
+// ============================================================================
 VulkanEngine::VulkanEngine()  = default;
 VulkanEngine::~VulkanEngine() = default;
+
 // ============================================================================
-// VulkanEngine :: Lifecycle
+// VulkanEngine :: init
+// Creates the context (instance/device), swapchain, offscreen targets, command
+// buffers, renderer & ImGui system. Fires initial swapchain-ready callback.
 // ============================================================================
 void VulkanEngine::init() {
     create_context(state_.width, state_.height, state_.name.c_str());
@@ -329,6 +357,12 @@ void VulkanEngine::init() {
     state_.running          = true;
     state_.should_rendering = true;
 }
+
+// ============================================================================
+// VulkanEngine :: run
+// Main event & frame loop: processes SDL events, handles resize, acquires image,
+// builds frame contexts, records rendering + UI, submits & presents.
+// ============================================================================
 void VulkanEngine::run() {
     using clock = std::chrono::steady_clock;
     auto t0     = clock::now();
@@ -341,26 +375,17 @@ void VulkanEngine::run() {
     last_frm.swapchain_image_view = VK_NULL_HANDLE;
 
     while (state_.running) {
+        // --- Event Pump ---
         while (SDL_PollEvent(&e)) {
-            if (renderer_) {
-                renderer_->on_event(e, eng, state_.initialized ? &last_frm : nullptr);
-            }
-            if (ui_) {
-                ui_->process_event(&e);
-            }
+            if (renderer_) { renderer_->on_event(e, eng, state_.initialized ? &last_frm : nullptr); }
+            if (ui_) { ui_->process_event(&e); }
 
             switch (e.type) {
             case SDL_EVENT_QUIT:
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED: state_.running = false; break;
-            case SDL_EVENT_WINDOW_MINIMIZED:
-                state_.minimized        = true;
-                state_.should_rendering = false;
-                break;
+            case SDL_EVENT_WINDOW_MINIMIZED: state_.minimized = true; state_.should_rendering = false; break;
             case SDL_EVENT_WINDOW_RESTORED:
-            case SDL_EVENT_WINDOW_MAXIMIZED:
-                state_.minimized        = false;
-                state_.should_rendering = true;
-                break;
+            case SDL_EVENT_WINDOW_MAXIMIZED: state_.minimized = false; state_.should_rendering = true; break;
             case SDL_EVENT_WINDOW_FOCUS_GAINED: state_.focused = true; break;
             case SDL_EVENT_WINDOW_FOCUS_LOST: state_.focused = false; break;
             case SDL_EVENT_WINDOW_RESIZED:
@@ -369,16 +394,15 @@ void VulkanEngine::run() {
             }
         }
 
+        // --- Time Update ---
         auto t_now      = clock::now();
         state_.dt_sec   = std::chrono::duration<double>(t_now - t_prev).count();
         state_.time_sec = std::chrono::duration<double>(t_now - t0).count();
         t_prev          = t_now;
 
-        if (!state_.should_rendering) {
-            SDL_WaitEventTimeout(nullptr, 100);
-            continue;
-        }
+        if (!state_.should_rendering) { SDL_WaitEventTimeout(nullptr, 100); continue; }
 
+        // --- Resize Handling ---
         if (state_.resize_requested) {
             recreate_swapchain();
             eng                           = make_engine_context();
@@ -388,10 +412,10 @@ void VulkanEngine::run() {
             continue;
         }
 
-        uint32_t imageIndex = 0;
-        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        // --- Frame Begin ---
+        uint32_t imageIndex = 0; VkCommandBuffer cmd = VK_NULL_HANDLE;
         begin_frame(imageIndex, cmd);
-        if (cmd == VK_NULL_HANDLE) {
+        if (cmd == VK_NULL_HANDLE) { // Acquire failed due to outdated swapchain
             if (state_.resize_requested) {
                 recreate_swapchain();
                 eng                           = make_engine_context();
@@ -405,45 +429,55 @@ void VulkanEngine::run() {
         FrameContext frm = make_frame_context(state_.frame_number, imageIndex, swapchain_.swapchain_extent);
         last_frm         = frm;
 
+        // --- Renderer Work ---
         if (renderer_) {
             renderer_->update(eng, frm);
             renderer_->record_graphics(cmd, eng, frm);
         }
 
+        // --- Composite Offscreen -> Swapchain ---
         blit_offscreen_to_swapchain(cmd, imageIndex, frm.extent);
 
+        // --- UI Rendering ---
         if (ui_) {
             ui_->new_frame();
-            if (renderer_) {
-                renderer_->on_imgui(eng, frm);
-            }
+            if (renderer_) { renderer_->on_imgui(eng, frm); }
             ui_->render_overlay(cmd, frm.swapchain_image, frm.swapchain_image_view, frm.extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         }
 
+        // --- Submit + Present ---
         end_frame(imageIndex, cmd);
         state_.frame_number++;
     }
 }
+
+// ============================================================================
+// VulkanEngine :: cleanup
+// Safe teardown: waits for device idle, destroys UI & renderer, command buffers
+// and finally the Vulkan context.
+// ============================================================================
 void VulkanEngine::cleanup() {
     if (ctx_.device) {
         vkDeviceWaitIdle(ctx_.device);
         destroy_imgui();
     }
 
-    if (renderer_) {
-        renderer_->on_swapchain_destroy(make_engine_context());
-    }
+    if (renderer_) { renderer_->on_swapchain_destroy(make_engine_context()); }
 
     destroy_command_buffers();
-    for (auto& f : std::ranges::reverse_view(mdq_)) {
-        f();
-    }
+    for (auto& f : std::ranges::reverse_view(mdq_)) { f(); }
     mdq_.clear();
     destroy_context();
 }
-void VulkanEngine::set_renderer(std::unique_ptr<IRenderer> r) {
-    renderer_ = std::move(r);
-}
+
+// Set the renderer implementation (must be done before init()).
+void VulkanEngine::set_renderer(std::unique_ptr<IRenderer> r) { renderer_ = std::move(r); }
+
+// ============================================================================
+// Context Creation / Destruction
+// create_context: builds instance, selects physical device, creates logical
+// device, queues, allocator, descriptor allocator & timeline semaphore.
+// ============================================================================
 void VulkanEngine::create_context(int window_width, int window_height, const char* app_name) {
     vkb::Instance vkb_inst = vkb::InstanceBuilder().set_app_name(app_name).request_validation_layers(false).use_default_debug_messenger().require_api_version(1, 3, 0).build().value();
     ctx_.instance          = vkb_inst.instance;
@@ -463,7 +497,7 @@ void VulkanEngine::create_context(int window_width, int window_height, const cha
     ctx_.graphics_queue        = vkbDev.get_queue(vkb::QueueType::graphics).value();
     ctx_.compute_queue         = vkbDev.get_queue(vkb::QueueType::compute).value();
     ctx_.transfer_queue        = vkbDev.get_queue(vkb::QueueType::transfer).value();
-    ctx_.present_queue         = ctx_.graphics_queue;
+    ctx_.present_queue         = ctx_.graphics_queue; // Present uses graphics queue
     ctx_.graphics_queue_family = vkbDev.get_queue_index(vkb::QueueType::graphics).value();
     ctx_.compute_queue_family  = vkbDev.get_queue_index(vkb::QueueType::compute).value();
     ctx_.transfer_queue_family = vkbDev.get_queue_index(vkb::QueueType::transfer).value();
@@ -488,6 +522,8 @@ void VulkanEngine::create_context(int window_width, int window_height, const cha
     mdq_.emplace_back([&] { vkDestroySemaphore(ctx_.device, render_timeline_, nullptr); });
     timeline_value_ = 0;
 }
+
+// Destroy all device-level resources and SDL components.
 void VulkanEngine::destroy_context() {
     for (auto& f : std::ranges::reverse_view(mdq_)) f();
     mdq_.clear();
@@ -504,6 +540,8 @@ void VulkanEngine::destroy_context() {
     IF_NOT_NULL_DO_AND_SET(ctx_.instance, vkDestroyInstance(ctx_.instance, nullptr), nullptr);
     SDL_Quit();
 }
+
+// Build an EngineContext snapshot for renderer usage.
 EngineContext VulkanEngine::make_engine_context() const {
     EngineContext eng{};
     eng.instance              = ctx_.instance;
@@ -522,6 +560,8 @@ EngineContext VulkanEngine::make_engine_context() const {
     eng.present_queue_family  = ctx_.present_queue_family;
     return eng;
 }
+
+// Build a FrameContext for current frame including swapchain/offscreen handles.
 FrameContext VulkanEngine::make_frame_context(uint64_t frame_index, uint32_t image_index, VkExtent2D extent) const {
     FrameContext frm{};
     frm.frame_index      = frame_index;
@@ -540,11 +580,10 @@ FrameContext VulkanEngine::make_frame_context(uint64_t frame_index, uint32_t ima
     frm.depth_image_view     = swapchain_.depth_image.imageView;
     return frm;
 }
+
+// Copy / blit the HDR offscreen color target into the acquired swapchain image.
 void VulkanEngine::blit_offscreen_to_swapchain(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent) {
-    VkImage src = swapchain_.drawable_image.image;
-    if (src == VK_NULL_HANDLE) return;
-    if (imageIndex >= swapchain_.swapchain_images.size()) return;
-    VkImage dst = swapchain_.swapchain_images[imageIndex];
+    VkImage src = swapchain_.drawable_image.image; if (src == VK_NULL_HANDLE) return; if (imageIndex >= swapchain_.swapchain_images.size()) return; VkImage dst = swapchain_.swapchain_images[imageIndex];
 
     VkImageMemoryBarrier2 barriers[2]{};
     barriers[0].sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -567,32 +606,16 @@ void VulkanEngine::blit_offscreen_to_swapchain(VkCommandBuffer cmd, uint32_t ima
     barriers[1].image            = dst;
     barriers[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
 
-    VkDependencyInfo dep{};
-    dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dep.imageMemoryBarrierCount = 2u;
-    dep.pImageMemoryBarriers    = barriers;
-    vkCmdPipelineBarrier2(cmd, &dep);
+    VkDependencyInfo dep{}; dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO; dep.imageMemoryBarrierCount = 2u; dep.pImageMemoryBarriers = barriers; vkCmdPipelineBarrier2(cmd, &dep);
 
-    VkImageBlit2 blit{};
-    blit.sType          = VK_STRUCTURE_TYPE_IMAGE_BLIT_2;
-    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
-    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
-    blit.srcOffsets[0]  = {0, 0, 0};
-    blit.srcOffsets[1]  = {static_cast<int32_t>(swapchain_.drawable_image.imageExtent.width), static_cast<int32_t>(swapchain_.drawable_image.imageExtent.height), 1};
-    blit.dstOffsets[0]  = {0, 0, 0};
-    blit.dstOffsets[1]  = {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
+    VkImageBlit2 blit{}; blit.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2; blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u}; blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u}; blit.srcOffsets[0] = {0, 0, 0}; blit.srcOffsets[1] = {static_cast<int32_t>(swapchain_.drawable_image.imageExtent.width), static_cast<int32_t>(swapchain_.drawable_image.imageExtent.height), 1}; blit.dstOffsets[0] = {0, 0, 0}; blit.dstOffsets[1] = {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
 
-    VkBlitImageInfo2 bi{};
-    bi.sType          = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2;
-    bi.srcImage       = src;
-    bi.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    bi.dstImage       = dst;
-    bi.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    bi.regionCount    = 1u;
-    bi.pRegions       = &blit;
-    bi.filter         = VK_FILTER_LINEAR;
-    vkCmdBlitImage2(cmd, &bi);
+    VkBlitImageInfo2 bi{}; bi.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2; bi.srcImage = src; bi.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; bi.dstImage = dst; bi.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; bi.regionCount = 1u; bi.pRegions = &blit; bi.filter = VK_FILTER_LINEAR; vkCmdBlitImage2(cmd, &bi);
 }
+
+// ============================================================================
+// Swapchain & Offscreen Resource Management
+// ============================================================================
 void VulkanEngine::create_swapchain(uint32_t width, uint32_t height) {
     swapchain_.swapchain_image_format = VK_FORMAT_B8G8R8A8_UNORM;
     vkb::Swapchain sc                 = vkb::SwapchainBuilder(ctx_.physical, ctx_.device, ctx_.surface)
@@ -617,19 +640,13 @@ void VulkanEngine::destroy_swapchain() {
 void VulkanEngine::recreate_swapchain() {
     if (!ctx_.device) return;
 
-    if (renderer_) {
-        renderer_->on_swapchain_destroy(make_engine_context());
-    }
+    if (renderer_) { renderer_->on_swapchain_destroy(make_engine_context()); }
 
     vkDeviceWaitIdle(ctx_.device);
     destroy_swapchain();
     destroy_offscreen_drawable();
 
-    int pxw = 0;
-    int pxh = 0;
-    SDL_GetWindowSizeInPixels(ctx_.window, &pxw, &pxh);
-    pxw = std::max(1, pxw);
-    pxh = std::max(1, pxh);
+    int pxw = 0; int pxh = 0; SDL_GetWindowSizeInPixels(ctx_.window, &pxw, &pxh); pxw = std::max(1, pxw); pxh = std::max(1, pxh);
     create_swapchain(static_cast<uint32_t>(pxw), static_cast<uint32_t>(pxh));
     create_offscreen_drawable(static_cast<uint32_t>(pxw), static_cast<uint32_t>(pxh));
 
@@ -642,7 +659,10 @@ void VulkanEngine::recreate_swapchain() {
 
     state_.resize_requested = false;
 }
+
+// Create HDR offscreen color + depth images (single-sampled) used for rendering.
 void VulkanEngine::create_offscreen_drawable(uint32_t width, uint32_t height) {
+    // Color target (R16G16B16A16_SFLOAT)
     {
         VkImageCreateInfo imgci{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .pNext                     = nullptr,
@@ -673,6 +693,7 @@ void VulkanEngine::create_offscreen_drawable(uint32_t width, uint32_t height) {
         swapchain_.drawable_image.imageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
         swapchain_.drawable_image.imageExtent = {width, height, 1u};
     }
+    // Depth target (D32_SFLOAT)
     {
         VkImageCreateInfo imgci{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .pNext                     = nullptr,
@@ -705,6 +726,8 @@ void VulkanEngine::create_offscreen_drawable(uint32_t width, uint32_t height) {
     }
     mdq_.emplace_back([&] { destroy_offscreen_drawable(); });
 }
+
+// Destroy offscreen images + views.
 void VulkanEngine::destroy_offscreen_drawable() {
     IF_NOT_NULL_DO_AND_SET(swapchain_.drawable_image.imageView, vkDestroyImageView(ctx_.device, swapchain_.drawable_image.imageView, nullptr), VK_NULL_HANDLE);
     IF_NOT_NULL_DO_AND_SET(swapchain_.drawable_image.image, vmaDestroyImage(ctx_.allocator, swapchain_.drawable_image.image, swapchain_.drawable_image.allocation), VK_NULL_HANDLE);
@@ -713,6 +736,10 @@ void VulkanEngine::destroy_offscreen_drawable() {
     IF_NOT_NULL_DO_AND_SET(swapchain_.depth_image.image, vmaDestroyImage(ctx_.allocator, swapchain_.depth_image.image, swapchain_.depth_image.allocation), VK_NULL_HANDLE);
     swapchain_.depth_image = {};
 }
+
+// ============================================================================
+// Command Buffers / Synchronization
+// ============================================================================
 void VulkanEngine::create_command_buffers() {
     VkCommandPoolCreateInfo pci{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .pNext = nullptr, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = ctx_.graphics_queue_family};
     for (auto& fr : frames_) {
@@ -736,6 +763,8 @@ void VulkanEngine::destroy_command_buffers() {
         submitted_timeline_value = 0;
     }
 }
+
+// Acquire next image, wait for previous frame (timeline), and begin command buffer.
 void VulkanEngine::begin_frame(uint32_t& imageIndex, VkCommandBuffer& cmd) {
     FrameData& fr = frames_[state_.frame_number % FRAME_OVERLAP];
     if (fr.submitted_timeline_value > 0) {
@@ -746,16 +775,15 @@ void VulkanEngine::begin_frame(uint32_t& imageIndex, VkCommandBuffer& cmd) {
     }
     const VkResult acq = vkAcquireNextImageKHR(ctx_.device, swapchain_.swapchain, UINT64_MAX, fr.imageAcquired, VK_NULL_HANDLE, &imageIndex);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR || acq == VK_SUBOPTIMAL_KHR) {
-        state_.resize_requested = true;
-        cmd                     = VK_NULL_HANDLE;
-        return;
-    }
+        state_.resize_requested = true; cmd = VK_NULL_HANDLE; return; }
     VK_CHECK(acq);
     VK_CHECK(vkResetCommandBuffer(fr.mainCommandBuffer, 0));
     cmd = fr.mainCommandBuffer;
     VkCommandBufferBeginInfo bi{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .pNext = nullptr, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, .pInheritanceInfo = nullptr};
     VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 }
+
+// End recording, submit (with timeline + binary semaphores) and present image.
 void VulkanEngine::end_frame(uint32_t imageIndex, VkCommandBuffer cmd) {
     VK_CHECK(vkEndCommandBuffer(cmd));
     FrameData& fr = frames_[state_.frame_number % FRAME_OVERLAP];
@@ -770,16 +798,15 @@ void VulkanEngine::end_frame(uint32_t imageIndex, VkCommandBuffer cmd) {
     fr.submitted_timeline_value = timeline_to_signal;
     VkPresentInfoKHR pi{.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .pNext = nullptr, .waitSemaphoreCount = 1u, .pWaitSemaphores = &fr.renderComplete, .swapchainCount = 1u, .pSwapchains = &swapchain_.swapchain, .pImageIndices = &imageIndex, .pResults = nullptr};
     VkResult pres = vkQueuePresentKHR(ctx_.graphics_queue, &pi);
-    if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) {
-        state_.resize_requested = true;
-        return;
-    }
+    if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) { state_.resize_requested = true; return; }
     VK_CHECK(pres);
 }
+
+// ============================================================================
+// Renderer Integration
+// ============================================================================
 void VulkanEngine::create_renderer() {
-    if (!renderer_) {
-        throw std::runtime_error("Renderer not set");
-    }
+    if (!renderer_) { throw std::runtime_error("Renderer not set"); }
     EngineContext eng{};
     eng.instance              = ctx_.instance;
     eng.physical              = ctx_.physical;
@@ -822,8 +849,9 @@ void VulkanEngine::destroy_renderer() {
         },
         nullptr);
 }
+
 // ============================================================================
-// VulkanEngine :: ImGui Integration
+// ImGui Integration (engine-level convenience wrappers)
 // ============================================================================
 void VulkanEngine::create_imgui() {
     ui_ = std::make_unique<UiSystem>();
@@ -832,10 +860,7 @@ void VulkanEngine::create_imgui() {
             throw std::runtime_error("ImGui initialization failed");
         }
     } catch (const std::exception& ex) {
-        if (ui_) {
-            ui_->shutdown(ctx_.device);
-            ui_.reset();
-        }
+        if (ui_) { ui_->shutdown(ctx_.device); ui_.reset(); }
         throw std::runtime_error(std::string("ImGui initialization failed: ") + ex.what());
     }
 
@@ -845,18 +870,16 @@ void VulkanEngine::create_imgui() {
     style.FrameRounding    = 4.0f;
     style.GrabRounding     = 4.0f;
 
-    VkPhysicalDeviceProperties props{};
-    vkGetPhysicalDeviceProperties(ctx_.physical, &props);
-    VkPhysicalDeviceMemoryProperties memProps{};
-    vkGetPhysicalDeviceMemoryProperties(ctx_.physical, &memProps);
+    VkPhysicalDeviceProperties props{}; vkGetPhysicalDeviceProperties(ctx_.physical, &props);
+    VkPhysicalDeviceMemoryProperties memProps{}; vkGetPhysicalDeviceMemoryProperties(ctx_.physical, &memProps);
 
+    // Dockspace panel
     ui_->add_panel([] {
         ImGuiDockNodeFlags flags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_AutoHideTabBar;
-
-        static ImGuiID dockspace_id = 0;
-        dockspace_id                = ImGui::DockSpaceOverViewport(dockspace_id, nullptr, flags, nullptr);
+        static ImGuiID dockspace_id = 0; dockspace_id = ImGui::DockSpaceOverViewport(dockspace_id, nullptr, flags, nullptr);
     });
 
+    // HUD panel (debug / stats)
     ui_->add_panel([this, props, memProps] {
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImVec2 pad(12.0f, 12.0f);
@@ -888,9 +911,7 @@ void VulkanEngine::create_imgui() {
             ImGui::Text("Depth:   0x%08X", static_cast<uint32_t>(swapchain_.depth_image.imageFormat));
 
             ImGui::SeparatorText("Window");
-            int lw = 0, lh = 0, pw = 0, ph = 0;
-            SDL_GetWindowSize(ctx_.window, &lw, &lh);
-            SDL_GetWindowSizeInPixels(ctx_.window, &pw, &ph);
+            int lw = 0, lh = 0, pw = 0, ph = 0; SDL_GetWindowSize(ctx_.window, &lw, &lh); SDL_GetWindowSizeInPixels(ctx_.window, &pw, &ph);
             ImGui::Text("Logical: %d x %d", lw, lh);
             ImGui::Text("Pixels : %d x %d", pw, ph);
             ImGui::Text("Focused: %s", state_.focused ? "Yes" : "No");
@@ -936,20 +957,13 @@ void VulkanEngine::create_imgui() {
             ImGui::SeparatorText("Memory (VMA)");
             std::vector<VmaBudget> budgets(memProps.memoryHeapCount);
             vmaGetHeapBudgets(ctx_.allocator, budgets.data());
-            uint64_t totalBudget = 0, totalUsage = 0;
-            for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
-                totalBudget += budgets[i].budget;
-                totalUsage += budgets[i].usage;
-            }
+            uint64_t totalBudget = 0, totalUsage = 0; for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) { totalBudget += budgets[i].budget; totalUsage += budgets[i].usage; }
             auto fmtMB = [](uint64_t bytes) { return double(bytes) / (1024.0 * 1024.0); };
             ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
         }
         ImGui::End();
     });
 }
-void VulkanEngine::destroy_imgui() {
-    if (ui_) {
-        ui_->shutdown(ctx_.device);
-        ui_.reset();
-    }
-}
+
+// Destroy ImGui backend & context.
+void VulkanEngine::destroy_imgui() { if (ui_) { ui_->shutdown(ctx_.device); ui_.reset(); } }
