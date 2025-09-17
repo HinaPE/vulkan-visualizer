@@ -117,15 +117,19 @@ function(use_sdl3 TARGET_NAME)
     target_link_libraries(${TARGET_NAME} PUBLIC SDL3::SDL3)
 
     if(WIN32)
-        get_property(_sdl3_copied TARGET ${TARGET_NAME} PROPERTY _SDL3_RUNTIME_COPIED SET)
-        if(NOT _sdl3_copied)
-            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_RUNTIME_DLLS:${TARGET_NAME}>
-                    $<TARGET_FILE_DIR:${TARGET_NAME}>
-                COMMAND_EXPAND_LISTS
-            )
-            set_property(TARGET ${TARGET_NAME} PROPERTY _SDL3_RUNTIME_COPIED TRUE)
+        # only copy DLLs once per target, only for targets that can have runtimes
+        get_target_property(_t ${TARGET_NAME} TYPE)
+        if(_t STREQUAL "EXECUTABLE" OR _t STREQUAL "SHARED_LIBRARY" OR _t STREQUAL "MODULE_LIBRARY")
+            get_property(_sdl3_copied TARGET ${TARGET_NAME} PROPERTY _SDL3_RUNTIME_COPIED SET)
+            if(NOT _sdl3_copied)
+                add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_RUNTIME_DLLS:${TARGET_NAME}>
+                        $<TARGET_FILE_DIR:${TARGET_NAME}>
+                    COMMAND_EXPAND_LISTS
+                )
+                set_property(TARGET ${TARGET_NAME} PROPERTY _SDL3_RUNTIME_COPIED TRUE)
+            endif()
         endif()
     endif()
 endfunction()

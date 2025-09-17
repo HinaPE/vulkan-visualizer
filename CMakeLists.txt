@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.26)
 # =========================================================
 project(
         VulkanVisualizer
-        VERSION 0.1.0
+        VERSION 0.2.0
         LANGUAGES CXX
 )
 
@@ -45,10 +45,9 @@ set(libname vulkan_visualizer)
 
 set(${libname}_SOURCES
         src/vk_engine.cpp
-        src/vk_abi.cpp
 )
 
-add_library(${libname} SHARED
+add_library(${libname} STATIC
         ${${libname}_SOURCES}
 )
 
@@ -92,9 +91,6 @@ target_compile_options(${libname} PRIVATE
         $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:${MSVC_RELEASE_OPTIONS}>
         $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:${GCC_CLANG_RELEASE_OPTIONS}>
 )
-
-# Export macro for ABI when building shared lib
-target_compile_definitions(${libname} PRIVATE VKVIZ_BUILD_DLL)
 
 # =========================================================
 # Optional examples
