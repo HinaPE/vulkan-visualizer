@@ -1,0 +1,91 @@
+name: windows-build
+
+on:
+  push:
+    branches: master
+  pull_request:
+    branches: master
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VULKAN_SDK_VERSION: 1.4.321.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CMake (>=3.26)
+        run: |
+          choco install cmake --version=3.29.6 -y --installargs 'ADD_CMAKE_TO_PATH=System'
+        shell: powershell
+
+      - name: Download & Install Vulkan SDK (pinned)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:VULKAN_SDK_VERSION
+          $url = "https://sdk.lunarg.com/sdk/download/$version/windows/VulkanSDK-$version-Installer.exe?Human=true"
+          $fallbackUrl = "https://sdk.lunarg.com/sdk/download/$version/windows/VulkanSDK-$version-Installer.exe"
+          $dst = Join-Path $env:RUNNER_TEMP "VulkanSDK-$version.exe"
+          Write-Host "Downloading Vulkan SDK $version from $url"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 600
+          } catch {
+            Write-Warning "Primary URL failed, trying fallback URL"
+            Invoke-WebRequest -Uri $fallbackUrl -OutFile $dst -UseBasicParsing -TimeoutSec 600
+          }
+          if (-not (Test-Path $dst)) { Write-Error "Vulkan SDK installer download failed"; exit 1 }
+          Write-Host "Running silent install..."
+          Start-Process -FilePath $dst -ArgumentList '/S' -Wait -NoNewWindow
+          $sdkRoot = "C:\VulkanSDK\$version"
+          if (-not (Test-Path $sdkRoot)) { Get-ChildItem C:\VulkanSDK -ErrorAction SilentlyContinue; Write-Error "Vulkan SDK path $sdkRoot not found after install"; exit 1 }
+          # Export environment
+          echo "VULKAN_SDK=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$sdkRoot\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: powershell
+
+      - name: Verify Vulkan tools
+        run: |
+          echo "VULKAN_SDK=$env:VULKAN_SDK"
+            if (-not (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe")) { Write-Error 'glslc not found'; exit 1 }
+          & "$env:VULKAN_SDK\Bin\glslc.exe" --version
+          if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
+            vulkaninfo | Select-String -Pattern 'Vulkan Instance Version'
+          } else {
+            Write-Warning 'vulkaninfo not in PATH (some minimal installs omit it)';
+          }
+        shell: powershell
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=Release
+        shell: powershell
+
+      - name: Build (library + examples)
+        run: |
+          cmake --build build --config Release --parallel
+        shell: powershell
+
+      - name: Package artifacts
+        if: success()
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          if (Test-Path build/examples/Release/basic_window.exe) { Copy-Item build/examples/Release/basic_window.exe artifacts/ -Force }
+          if (Test-Path build/examples/Release/SDL3.dll) { Copy-Item build/examples/Release/SDL3.dll artifacts/ }
+          if (Test-Path build/Release/vulkan_visualizer.lib) { Copy-Item build/Release/vulkan_visualizer.lib artifacts/ }
+          if (Test-Path build/Release/vulkan_visualizer.pdb) { Copy-Item build/Release/vulkan_visualizer.pdb artifacts/ }
+        shell: powershell
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-output
+          path: artifacts
+          if-no-files-found: error
+
+      - name: (Optional) Shader compile smoke check
+        if: success()
+        run: |
+          if (Test-Path build/examples/shaders) { Get-ChildItem build/examples/shaders } else { echo 'Shader dir missing (was glslc skipped?)' }
+        shell: powershell
