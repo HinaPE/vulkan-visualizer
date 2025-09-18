@@ -143,7 +143,8 @@ int main(){
 ```
 Key frame data fields:
 - `frm.extent` – current framebuffer dimensions.
-- `frm.offscreen_image` – HDR color image to render into (GENERAL layout expected when you start; engine handles post-blit state transitions for the next frame).
+- `frm.color_attachments` – negotiated offscreen attachments (first entry mirrors `frm.offscreen_image` for legacy renderers).
+- `frm.presentation_mode` – requested presentation flow for the current renderer.
 
 ---
 ## Using the C ABI (vk_abi.h)
