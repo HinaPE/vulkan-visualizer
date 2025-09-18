@@ -1,293 +1,281 @@
-# Vulkan Visualizer
-[![Windows CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml)[![Linux CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml)[![macOS CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/macos-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/macos-build.yml)
-> A lightweight, modular Vulkan rendering engine with an ImGui HUD, dynamic rendering pipeline, offscreen HDR path, and both C++ and C (stable) ABI frontends.
+# Vulkan Visualizer (v0.3.0)
+[![Windows CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml) 
+[![Linux CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml) 
+[![macOS CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/macos-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/macos-build.yml)
 
-## Overview
-`vulkan_visualizer` is a compact Vulkan engine focused on:
-- Fast iteration with a minimal yet extensible rendering loop.
-- Dynamic Rendering (no static render pass objects) targeting Vulkan 1.3 features.
-- ImGui docking HUD for real‑time introspection of device, frame, and memory state.
-- An offscreen HDR render target (R16G16B16A16) followed by a blit to the swapchain.
-- A clear separation between engine orchestration and user renderer logic (`IRenderer`).
-- A stable C ABI (via `vk_abi.h`) for language bindings / embedding (Rust, Python FFI, etc.).
+> A lightweight, modular Vulkan 1.3 rendering mini‑engine featuring dynamic rendering, multi‑attachment offscreen pipeline, ImGui HUD, and both high‑level C++ and stable C ABI frontends.
 
 ---
-## Highlights
-| Feature | Details |
-|---------|---------|
-| Vulkan Version | 1.3 (via VkBootstrap) |
-| Swapchain | FIFO present mode, dynamic recreation |
-| Dynamic Rendering | Yes (no fixed render pass objects) |
-| Synchronization | Timeline semaphore + per-frame binaries |
+## TL;DR
+Build a tiny Vulkan prototype fast: plug in a renderer (C++ class or C callback table), describe the attachments you need, record into a command buffer the engine prepares, and optionally let the engine blit an HDR target to the swapchain with an ImGui overlay.
+
+---
+## Highlights (Current State)
+| Area | Details |
+|------|---------|
+| Vulkan Core | 1.4.321 (dynamic rendering, synchronization2) via VkBootstrap |
+| Windowing | SDL3 |
 | Memory | Vulkan Memory Allocator (VMA) |
-| Descriptors | Simple pooled allocator (`DescriptorAllocator`) |
-| ImGui | SDL3 + Vulkan backend, docking + multi-viewport |
-| Offscreen Path | R16G16B16A16 color + optional D32 depth |
-| C++ API | `VulkanEngine`, `IRenderer` interface |
-| C ABI | Stable functions + opaque handle (`vk_abi.h`) |
-| Example | Colored triangle (`basic_window`) in both APIs |
+| Descriptors | Single pooled allocator with ratio config |
+| Frames In Flight | 2 (FRAME_OVERLAP) |
+| Sync | Timeline semaphore + per-frame binary semaphores |
+| Rendering | Fully dynamic (no render pass objects) |
+| Offscreen Path | Configurable color attachment list (default HDR R16G16B16A16) + optional depth |
+| Presentation Modes | EngineBlit / RendererComposite / DirectToSwapchain |
+| ImGui | Docking + multi-viewport backend (optional via caps) |
+| Capability Negotiation | Renderer supplies feature + attachment + usage requirements |
+| Extensibility | Async compute (experimental flag), custom attachments, stats callbacks |
+| Library Type | Static (default) |
+| Example | Triangle (basic_window) via C ABI |
 
 ---
-## Project Structure
+## What's New in 0.3.0
+- Switched default build to a static library (simpler distribution).
+- Extended `RendererCaps` for feature negotiation (ray tracing, mesh shader, etc. flags — placeholders for future enablement).
+- Attachment negotiation via `RendererCaps.color_attachments` / `depth_attachment` with per‑attachment usage bits.
+- Presentation pipeline modes (`PresentationMode`) enabling custom composition or direct swapchain rendering.
+- Expanded `IRenderer` interface: compute paths (`record_compute`, `record_async_compute`), composition (`compose`), simulation/update split, events, option channel, asset reload, screenshot request stub, stats accessor.
+- Improved swapchain/depth/attachment lifecycle hooks (`on_swapchain_ready` / `on_swapchain_destroy`).
+
+---
+## Repository Layout
 ```
 include/
-  vk_engine.h        # C++ engine & interfaces
-  vk_abi.h           # Public C ABI surface
+  vk_engine.h          # Public C++ API (engine + renderer interfaces)
+  vk_abi.h             # Stable C ABI surface (opaque handle + callbacks)
 src/
-  vk_engine.cpp      # Engine implementation
-  vk_abi.cpp         # ABI adapter (C -> C++)
+  vk_engine.cpp        # Engine implementation
 examples/
   CMakeLists.txt
-  basic_window.cpp   # Triangle example using C ABI
-  shaders/
-    triangle.vert
-    triangle.frag
-cmake/
-  setup_sdl3.cmake
-  setup_imgui.cmake
-  setup_vkbootstrap.cmake
-  setup_vma.cmake
-CMakeLists.txt       # Root build script
-README.md
+  basic_window.cpp     # Triangle example (C ABI)
+  shaders/             # GLSL sources (compiled if glslc found)
+cmake/                 # Dependency setup helpers
+CMakeLists.txt         # Root build script
 LICENSE
+README.md
 ```
 
 ---
-## Architecture
-Top-level responsibilities:
-- **VulkanEngine**: Owns instance, device, surface, queues, swapchain, command buffers, timeline semaphore, offscreen targets, and ImGui lifecycle.
-- **IRenderer (C++)** / **Callback Table (C ABI)**: User logic entry points (initialize, update, record_graphics, on_swapchain events, on_imgui, etc.).
-- **Frame Loop**:
-  1. Poll SDL events.
-  2. Recreate swapchain if resize flagged.
-  3. Acquire swapchain image; begin primary command buffer.
-  4. User graphics recording (`record_graphics`).
-  5. Engine blits offscreen HDR → swapchain image.
-  6. ImGui overlay render.
-  7. Submit & present; advance frame counter.
-- **Synchronization**: One timeline semaphore governs per-frame GPU completion; wait before reusing resources.
+## Architecture Overview
+Core responsibilities:
+1. VulkanEngine: Instance/device creation, queue discovery, swapchain management, descriptor pool, VMA allocator, attachment creation, frame loop, ImGui lifecycle, synchronization.
+2. IRenderer (C++) or callback table (C ABI): Supplies capabilities, initializes resources, records commands (graphics/compute), handles events & UI, provides stats.
+3. Frame Loop Steps:
+   - Poll SDL events (dispatch to renderer `on_event`).
+   - Resize check & potential swapchain re-create.
+   - Acquire swapchain image + begin primary command buffer.
+   - (Optional) Async compute recording.
+   - Renderer simulation/update (`simulate` then `update`).
+   - Renderer graphics recording (`record_graphics`).
+   - Optional composition (`compose`) if using RendererComposite mode.
+   - Engine blit offscreen → swapchain (EngineBlit mode only).
+   - ImGui pass (if enabled in caps).
+   - Submit + present; advance timeline semaphore.
 
 ---
-## Dependencies
-Bundled / fetched via CMake (expected to download or be externally provided):
-- **Vulkan SDK** (headers + loader; environment variable `VULKAN_SDK` helpful on Windows).
-- **SDL3** (window + input + surface creation).
-- **VkBootstrap** (instance / device selection & feature chaining).
-- **Vulkan Memory Allocator (VMA)** (buffer & image allocation abstraction).
-- **Dear ImGui** (debug UI).
+## Renderer Capability Negotiation
+`RendererCaps` is populated/adjusted via (in order if implemented):
+1. `query_required_device_caps(RendererCaps&)` (static needs before device creation — request features/extensions).
+2. Device creation occurs considering caps.
+3. `get_capabilities(const EngineContext&, RendererCaps&)` (device-aware refinement: choose formats, attachments, presentation mode, toggle ImGui, etc.).
+4. Engine sanitizes, allocates attachments & swapchain.
+5. `initialize(eng, caps, initial_frame)` invoked.
 
----
-## Build Requirements
-| Component | Minimum Version (Suggested) |
-|-----------|-----------------------------|
-| CMake     | 3.26+                       |
-| Compiler  | MSVC 19.36+ / Clang 16+ / GCC 12+ |
-| Vulkan SDK| 1.3+ (example uses 1.3 dynamic rendering, synchronization2) |
-| Python    | (optional, for external tooling, not required to build) |
+Important fields:
+- `color_attachments`: vector of `AttachmentRequest` (name, format, usage, samples, initial_layout).
+- `depth_attachment`: optional; if set, depth image created with requested format.
+- `presentation_attachment`: name of color attachment used as source for presentation (EngineBlit) or composition.
+- `presentation_mode`: EngineBlit (engine blits), RendererComposite (renderer composites to swapchain), DirectToSwapchain (renderer writes directly — no offscreen required).
+- `enable_imgui`: toggle HUD.
+- Feature flags (e.g. `need_ray_tracing_pipeline`) are placeholders; engine will later propagate proper extension chains.
 
-> NOTE: Ensure your GPU & driver support Vulkan 1.3 features: dynamic rendering & synchronization2.
-
----
-## Quick Start
-### Configure & Build (Standard)
-```bash
-# Configure (Release example)
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON
-# Build
-cmake --build build --config Release
+Example minimal customization:
+```cpp
+void MyRenderer::query_required_device_caps(RendererCaps& caps) {
+    caps.color_attachments = {
+        AttachmentRequest{ .name = "hdr_color", .format = VK_FORMAT_R16G16B16A16_SFLOAT },
+        AttachmentRequest{ .name = "albedo",    .format = VK_FORMAT_R8G8B8A8_UNORM }
+    }; 
+    caps.depth_attachment = AttachmentRequest{ .name = "depth", .format = VK_FORMAT_D32_SFLOAT, .aspect = VK_IMAGE_ASPECT_DEPTH_BIT };
+    caps.presentation_attachment = "hdr_color"; // engine blits this one
+}
 ```
 
-### Building the Example Triangle
-The `basic_window` executable (C ABI) will be built if `VULKAN_VISUALIZER_BUILD_EXAMPLE=ON`.
-Run it:
-```bash
-./build/examples/basic_window   # (Linux/macOS)
-# or on Windows
-build\examples\basic_window.exe
-```
-
-### Runtime DLL Copy on Windows
-A post-build step copies transitive runtime DLLs (engine DLL, SDL3, etc.) into the `examples/` output directory using `$<TARGET_RUNTIME_DLLS:basic_window>`.
-If you add new executables, replicate the pattern in `examples/CMakeLists.txt`.
+---
+## Presentation Modes
+| Mode | Flow |
+|------|------|
+| EngineBlit | Renderer writes offscreen; engine blits chosen attachment to swapchain + overlays ImGui |
+| RendererComposite | Renderer performs its own final composite into swapchain; engine skips blit |
+| DirectToSwapchain | Renderer records directly into swapchain image (no intermediate HDR) |
 
 ---
-## CMake Options
-| Option | Default | Description |
-|--------|---------|-------------|
-| `VULKAN_VISUALIZER_BUILD_EXAMPLE` | `OFF` | Build example triangle executable |
-
-(Planned) Additional options (not yet implemented):
-- `VULKAN_VISUALIZER_BUILD_SHARED` (toggle shared vs static)
-- `VULKAN_VISUALIZER_ENABLE_IMGUI`
-- `VULKAN_VISUALIZER_ENABLE_VALIDATION`
-
----
-## Using the C++ API
-Minimal skeleton:
+## C++ API Quick Start
 ```cpp
 #include <vk_engine.h>
 class MyRenderer : public IRenderer {
-  void initialize(const EngineContext& eng) override { /* create pipelines */ }
-  void destroy(const EngineContext& eng) override { /* destroy pipelines */ }
-  void record_graphics(VkCommandBuffer cmd, const EngineContext& eng, const FrameContext& frm) override {
-      // Record Vulkan commands against frm.offscreen_image
-  }
+public:
+    void query_required_device_caps(RendererCaps& caps) override {
+        caps.enable_imgui = true;
+        // leave defaults (single HDR color attachment)
+    }
+    void initialize(const EngineContext& eng, const RendererCaps& caps, const FrameContext& frm) override {
+        (void)eng; (void)caps; (void)frm; // create pipelines / descriptors
+    }
+    void destroy(const EngineContext& eng, const RendererCaps& caps) override {
+        (void)eng; (void)caps; // cleanup
+    }
+    void record_graphics(VkCommandBuffer cmd, const EngineContext& eng, const FrameContext& frm) override {
+        (void)eng; // Record against frm.color_attachments[0].image / frm.offscreen_image
+        // Perform layout transitions & draws as needed.
+    }
 };
 int main(){
-  VulkanEngine engine;
-  engine.set_renderer(std::make_unique<MyRenderer>());
-  engine.init();
-  engine.run();
-  engine.cleanup();
+    VulkanEngine engine;
+    engine.configure_window(1280, 720, "Visualizer Example");
+    engine.set_renderer(std::make_unique<MyRenderer>());
+    engine.init();
+    engine.run();
+    engine.cleanup();
 }
 ```
-Key frame data fields:
-- `frm.extent` – current framebuffer dimensions.
-- `frm.color_attachments` – negotiated offscreen attachments (first entry mirrors `frm.offscreen_image` for legacy renderers).
-- `frm.presentation_mode` – requested presentation flow for the current renderer.
+Key frame data:
+- `frm.frame_index`, `frm.image_index`.
+- `frm.extent` (current swapchain / attachment dimensions).
+- `frm.color_attachments` (vector of negotiated attachments).
+- `frm.offscreen_image` (legacy primary color when EngineBlit; mirrors first color attachment for convenience).
+- `frm.presentation_mode` (active presentation strategy).
+
+### Events & ImGui
+Override `on_event(const SDL_Event&, ...)` to intercept input. Override `on_imgui(...)` to inject custom dockable panels (ImGui context already begun).
+
+### Compute & Async
+- `record_compute` executes on primary queue before graphics.
+- `record_async_compute` (if returns true) records on a separate command buffer & may signal a semaphore; set `allow_async_compute` in caps to request resources.
+
+### Composition
+If using `RendererComposite`, emit your final color output directly into the swapchain image provided in `FrameContext` (perform layout transitions).
 
 ---
-## Using the C ABI (vk_abi.h)
-The C ABI is a stable, struct-size validated interface for foreign language bindings.
+## C ABI Usage
 ```c
 #include <vk_abi.h>
-static VKVizResult init(const VKVizEngineContext* eng, void* ud) { return VKVIZ_SUCCESS; }
-static void destroy(const VKVizEngineContext* eng, void* ud) {}
-static void record(VkCommandBuffer cmd, const VKVizEngineContext* eng, const VKVizFrameContext* frm, void* ud) {
-    // Vulkan recording using frm->offscreen_image
-}
+static VKVizResult init(const VKVizEngineContext* eng, const VKVizRendererCaps* caps, const VKVizFrameContext* frm, void* ud){ (void)eng;(void)caps;(void)frm;(void)ud; return VKVIZ_SUCCESS; }
+static void destroy(const VKVizEngineContext* eng, const VKVizRendererCaps* caps, void* ud){ (void)eng;(void)caps;(void)ud; }
+static void record(VkCommandBuffer cmd, const VKVizEngineContext* eng, const VKVizFrameContext* frm, void* ud){ (void)eng; (void)ud; /* draw using frm->offscreen_image */ }
 int main(){
-  VKVizEngineCreateInfo ci = {0};
-  ci.struct_size = sizeof(ci);
-  ci.window_width = 1280; ci.window_height = 720; ci.enable_imgui = 1;
+  VKVizEngineCreateInfo ci = {0}; ci.struct_size = sizeof(ci); ci.window_width=1280; ci.window_height=720; ci.enable_imgui=1;
   VKVizEngine* engine = NULL; VKViz_CreateEngine(&ci, &engine);
-  VKVizRendererCallbacks cb = {0};
-  cb.struct_size = sizeof(cb);
-  cb.initialize = init; cb.destroy = destroy; cb.record_graphics = record;
+  VKVizRendererCallbacks cb = {0}; cb.struct_size = sizeof(cb); cb.initialize = init; cb.destroy = destroy; cb.record_graphics = record;
   VKViz_SetRenderer(engine, &cb, NULL);
   VKViz_Init(engine);
   VKViz_Run(engine);
   VKViz_DestroyEngine(engine);
 }
 ```
-**Struct Size Contracts**: Always set `struct_size = sizeof(StructType)` before calling into the ABI. The engine rejects mismatched sizes with `VKVIZ_ERROR_STRUCT_SIZE_MISMATCH`.
+Always set `struct_size` for every struct passed into the ABI. Functions return `VKVizResult` codes (see `vk_abi.h`).
 
 ---
-## Implementing a Custom Renderer
-### C++ Renderer
-Implement `IRenderer::record_graphics` and optionally override `update`, `on_imgui`, etc. Use `EngineContext` queue families or device handles for advanced resource creation.
+## Building
+### Requirements
+| Component | Minimum |
+|-----------|---------|
+| CMake | 3.26 |
+| Compiler | MSVC 19.36+ / Clang 16+ / GCC 12+ |
+| Vulkan SDK | 1.3+ |
 
-### C ABI Renderer
-Fill out a `VKVizRendererCallbacks` table. Only `record_graphics` is strictly required; others may be NULL.
+SDL3, ImGui, VkBootstrap, and VMA are fetched / configured by CMake helper scripts.
 
-Lifecycle order (C ABI):
-1. `VKViz_CreateEngine`
-2. `VKViz_SetRenderer`
-3. `VKViz_Init` (triggers renderer `initialize`)
-4. `VKViz_Run` (calls `update` + `record_graphics` per frame)
-5. `VKViz_DestroyEngine` (calls renderer `destroy`)
+### Configure & Build
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON
+cmake --build build --config Release
+```
 
----
-## Shader Pipeline
-Example shaders are GLSL 460 core. CMake attempts to compile them with `glslc` if found. Artifacts land in `examples/shaders/*.spv`.
-If `glslc` is not present:
-- Provide precompiled SPIR-V manually.
-- Or set up the Vulkan SDK so that `glslc` is discoverable in `PATH`.
+### Run Example
+```bash
+# Linux/macOS
+./build/examples/basic_window
+# Windows
+build\\examples\\basic_window.exe
+```
 
----
-## Offscreen & Presentation Path
-Rendering flow:
-1. Renderer writes into `offscreen_image` (initially `VK_IMAGE_LAYOUT_GENERAL`).
-2. Engine transitions it to `TRANSFER_SRC` then blits → swapchain image (now `TRANSFER_DST`).
-3. ImGui overlay loads swapchain image, appends UI.
-4. Swapchain image presented.
-5. Offscreen image is expected back in `GENERAL` for next frame (renderer returns it so; provided example transitions back).
-
----
-## ImGui Integration
-- Dockspace + multi-viewport enabled by default.
-- Panels added via `UiSystem::add_panel` (internal); renderer can expose UI by overriding `on_imgui`.
-- HUD displays: FPS, frame index, swapchain format/extent, device properties, memory usage, renderer stats, synchronization timeline.
+If `glslc` is on PATH, GLSL shaders in `examples/shaders` are compiled to SPIR-V (`*.spv`). Otherwise, provide precompiled binaries manually.
 
 ---
 ## Static vs Shared Library
-Currently the root CMake builds a **shared** library (`vulkan_visualizer.dll` / `.so` / `.dylib`).
-Reasons you may prefer static:
-- Simpler deployment (no runtime dependency).
-- Avoids export macro complexity on Windows.
-To switch temporarily, edit:
-```cmake
-add_library(vulkan_visualizer STATIC ${${libname}_SOURCES})
-```
-(Planned: configurable with `VULKAN_VISUALIZER_BUILD_SHARED` option.)
-
-### Export Macros
-When building shared, `VKVIZ_BUILD_DLL` is defined for proper symbol export on Windows in the C ABI.
+The current default is a static library (`add_library(vulkan_visualizer STATIC ...)`). To experiment with a shared build, adjust the root `CMakeLists.txt` (a future option flag may automate this).
 
 ---
-## Planned Install / Packaging
-(Not yet implemented in current CMakeLists — suggestions)
-```cmake
-include(GNUInstallDirs)
-install(TARGETS vulkan_visualizer
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-install(FILES include/vk_engine.h include/vk_abi.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+## Custom Attachments & Presentation Example
+```cpp
+void MyRenderer::query_required_device_caps(RendererCaps& caps) {
+    caps.presentation_mode = PresentationMode::EngineBlit;
+    caps.color_attachments = {
+        { .name = "hdr_color", .format = VK_FORMAT_R16G16B16A16_SFLOAT },
+        { .name = "normal",   .format = VK_FORMAT_A2B10G10R10_UNORM_PACK32, .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT }
+    };
+    caps.depth_attachment = AttachmentRequest{ .name = "depth", .format = VK_FORMAT_D32_SFLOAT, .aspect = VK_IMAGE_ASPECT_DEPTH_BIT };
+}
 ```
-Then downstream usage:
-```cmake
-find_package(VulkanVisualizer REQUIRED)
-add_executable(app main.cpp)
-target_link_libraries(app PRIVATE VulkanVisualizer::vulkan_visualizer)
+Access inside frame:
+```cpp
+for (auto& att : frm.color_attachments) {
+    if (att.name == "normal") { /* use att.image / att.view */ }
+}
 ```
+
+---
+## Stats & Options
+- Implement `get_stats()` to surface runtime metrics (draw calls, CPU/GPU ms). ImGui HUD will query periodically.
+- `set_option_*` / `get_option_*` provide a lightweight, string‑keyed channel for UI controls without hard API changes.
+
+---
+## Screenshot / Asset Reload (Stubs)
+- `request_screenshot(const char* path)` and `reload_assets` are forward‑looking hooks; provide internal wiring as needed.
 
 ---
 ## Roadmap
-- [ ] Add install + export targets (CMake package config).
-- [ ] Optional validation layer toggle (runtime & build option).
-- [ ] Configurable number of frames-in-flight.
-- [ ] Render graph / pass abstraction (optional layer on top of dynamic rendering).
-- [ ] Async screenshot API (expose in C ABI).
-- [ ] Headless mode (no SDL window, offscreen only).
-- [ ] Additional examples (compute + graphics, textured quad, IMGUI docking custom panels).
-- [ ] Memory / descriptor statistics panel.
+- Install & export targets (CMake package config).
+- Toggle validation layers & debug messenger exposure.
+- Configurable frames in flight.
+- Render graph / pass scheduling layer.
+- Async screenshot implementation.
+- Headless offscreen mode (no SDL window).
+- Additional samples: compute, textured quad, composition path, async compute.
+- Enhanced statistics & descriptor/memory tracking panels.
+- Feature flag activation for ray tracing / mesh shading when available.
 
 ---
 ## Contributing
 1. Fork & branch (`feat/my-feature`).
-2. Keep commits focused and messages clear.
-3. Run builds for Debug & Release (Windows + at least one Unix toolchain if possible).
-4. Submit PR with a short problem/solution summary.
-5. Style: modern C++23, avoid unnecessary abstractions, keep public headers minimal.
+2. Keep commits focused; write clear messages.
+3. Test Debug & Release across at least one Windows and one Unix compiler if possible.
+4. Open PR with concise problem + solution summary.
+5. Style: Modern C++23; keep public headers minimal & stable.
 
-Issues / Feature Requests: Use GitHub Issues template (describe environment + repro steps).
+Issues & feature requests: open a GitHub issue (include environment + repro).
 
 ---
 ## Troubleshooting
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `VKVIZ_ERROR_RUN_LOOP_ACTIVE` | Called `VKViz_Run` while `running` already set | Call only once, or ensure previous loop ended |
-| `ERROR_STRUCT_SIZE_MISMATCH` | Forgot to set `struct_size` | Initialize struct to zero then set size |
-| Blank window / no triangle | Offscreen image never cleared/drawn | Ensure `record_graphics` transitions + draws + transitions back |
-| ImGui not visible | Viewports or docking conflicts / minimized window | Restore window, check swapchain extent |
-| Validation layer warnings (future) | Optional features missing | Enable layers or adjust feature requests |
-| Missing Vulkan symbols when linking example | Library linked PRIVATE instead of PUBLIC | (Fixed: Vulkan::Vulkan now PUBLIC) |
-| Windows post-build copy fails | Path quoting or source=dest copy | Simplified `copy_if_different` command |
+| Size mismatch error | Missing `struct_size` init | Zero struct then set `.struct_size = sizeof(struct)` |
+| Blank window | Renderer never writes to presentation attachment | Ensure proper layout transitions + draw calls |
+| ImGui absent | `enable_imgui=false` in caps | Set to true in `query_required_device_caps` |
+| Stale swapchain | Resize events ignored | Engine auto-flags; ensure not blocking event loop |
+| Missing Vulkan symbols | Linkage scope mismatch (should be PUBLIC) | (Root CMake already sets `Vulkan::Vulkan` PUBLIC) |
 
-### Logging
-A user-provided logging callback (planned enhancement) can surface internal exceptions; currently most exceptions map to `VKVIZ_ERROR_UNKNOWN`.
+Logging: Future callback hook planned; currently unexpected exceptions map to generic failures.
 
-### Performance Tips
-- Avoid heavy CPU stalls inside `record_graphics`.
-- Batch resource creation; reuse descriptor sets where possible.
-- Use GPU vendor debug markers if later integrated.
+Performance tips:
+- Keep per-frame allocations minimal (reuse descriptor sets & buffers).
+- Batch Vulkan state changes; prefer dynamic rendering subpass-like grouping.
+- Avoid heavy CPU stalls in `record_graphics` / `record_compute`.
 
 ---
 ## License
-See [LICENSE](./LICENSE). (Provide SPDX identifier if appropriate — e.g. MIT, Apache-2.0.)
+See [LICENSE](./LICENSE). (SPDX identifier recommended if redistributing.)
 
 ---
-**Happy rendering!** Feel free to propose improvements or request additional bindings.
-
+Happy rendering — contributions & feedback welcome!
