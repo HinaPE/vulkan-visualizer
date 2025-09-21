@@ -100,6 +100,9 @@ public:
         VK_CHECK(vkCreateGraphicsPipelines(dev,VK_NULL_HANDLE,1,&pci,nullptr,&pipe));
         vkDestroyShaderModule(dev, vs, nullptr);
         vkDestroyShaderModule(dev, fs, nullptr);
+        // Set camera axes anchor to world origin by default for this example
+        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
+        cam_.set_axes_world_length(1.0f);
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override
@@ -158,6 +161,7 @@ public:
     }
 
     void update(const EngineContext&, const FrameContext& f) override {
+        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
         cam_.update(f.dt_sec, int(f.extent.width), int(f.extent.height));
     }
     void on_event(const SDL_Event& e, const EngineContext& eng, const FrameContext* f) override {
@@ -174,7 +178,6 @@ public:
         ImGui::End();
 
         cam_.imgui_panel(nullptr);
-        cam_.imgui_draw_overlay(int(f.extent.width), int(f.extent.height));
 
         ImGui::Begin("Log");
         ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");

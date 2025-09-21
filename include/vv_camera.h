@@ -46,6 +46,8 @@ enum class CameraMode : uint8_t { Orbit, Fly };
 
 struct BoundingBox { float3 min{0,0,0}; float3 max{0,0,0}; bool valid{false}; };
 
+enum class AxesAnchor : uint8_t { ScreenCorner, WorldOrigin, WorldTarget };
+
 struct CameraState {
     // Common
     CameraMode mode{CameraMode::Orbit};
@@ -122,6 +124,12 @@ public:
     [[nodiscard]] bool show_grid() const { return show_grid_; }
     [[nodiscard]] bool show_axes() const { return show_axes_; }
 
+    // Axes anchor config
+    void set_axes_anchor(AxesAnchor a) { axes_anchor_ = a; }
+    [[nodiscard]] AxesAnchor axes_anchor() const { return axes_anchor_; }
+    void set_axes_world_length(float l) { axes_world_len_ = l; }
+    [[nodiscard]] float axes_world_length() const { return axes_world_len_; }
+
 private:
     // Internals
     void recompute_cached_();
@@ -176,6 +184,8 @@ private:
     // Overlay toggles
     bool show_grid_{true};
     bool show_axes_{true};
+    AxesAnchor axes_anchor_{AxesAnchor::WorldOrigin};
+    float axes_world_len_{0.75f};
 };
 
 } // namespace vv

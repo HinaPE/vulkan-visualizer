@@ -87,6 +87,8 @@ public:
         // initial camera
         cam_.set_mode(vv::CameraMode::Orbit);
         vv::CameraState s = cam_.state(); s.target = {0,0,0}; s.distance = 3.5f; s.pitch_deg = 20.0f; s.yaw_deg = -30.0f; s.znear = 0.01f; s.zfar = 100.0f; cam_.set_state(s);
+        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
+        cam_.set_axes_world_length(1.0f);
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override {
@@ -96,6 +98,7 @@ public:
     }
 
     void update(const EngineContext&, const FrameContext& f) override {
+        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
         cam_.update(f.dt_sec, int(f.extent.width), int(f.extent.height));
     }
 
@@ -144,7 +147,6 @@ public:
         }
         ImGui::End();
         cam_.imgui_panel(nullptr);
-        cam_.imgui_draw_overlay(int(f.extent.width), int(f.extent.height));
     }
 
 private:
@@ -166,4 +168,3 @@ int main(){
     }
     return 0;
 }
-

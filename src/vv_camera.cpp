@@ -429,74 +429,9 @@ void CameraService::imgui_panel(bool* p_open) {
     if (ImGui::Button("Save")) { save_to_file(pathbuf); }
     ImGui::SameLine(); if (ImGui::Button("Load")) { load_from_file(pathbuf); }
 
-    ImGui::SeparatorText("Overlay");
-    ImGui::Checkbox("Show Grid", &show_grid_);
-    ImGui::SameLine(); ImGui::Checkbox("Show Axes", &show_axes_);
-
     ImGui::End();
 
     recompute_cached_();
-}
-
-void CameraService::imgui_draw_overlay(int viewport_w, int viewport_h) {
-    if (show_axes_) draw_axes_overlay_(viewport_w, viewport_h);
-    if (show_grid_) draw_grid_overlay_(viewport_w, viewport_h);
-}
-
-void CameraService::draw_axes_overlay_(int viewport_w, int viewport_h) {
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const ImVec2 origin(40, viewport_h - 40);
-    const float len = 30.0f;
-    float3 cam_x{ view_.m[0], view_.m[1], view_.m[2] };
-    float3 cam_y{ view_.m[4], view_.m[5], view_.m[6] };
-    float3 cam_z{ view_.m[8], view_.m[9], view_.m[10] };
-    auto dir2 = [&](const float3& v){ return ImVec2(-v.x, v.y); };
-    ImU32 colX = IM_COL32(230, 80, 80, 255);
-    ImU32 colY = IM_COL32(80, 230, 120, 255);
-    ImU32 colZ = IM_COL32(80, 120, 230, 255);
-    ImVec2 endX(origin.x + dir2(cam_x).x*len, origin.y + dir2(cam_x).y*len);
-    ImVec2 endY(origin.x + dir2(cam_y).x*len, origin.y + dir2(cam_y).y*len);
-    ImVec2 endZ(origin.x + dir2(cam_z).x*len, origin.y + dir2(cam_z).y*len);
-    dl->AddLine(origin, endX, colX, 2.0f);
-    dl->AddLine(origin, endY, colY, 2.0f);
-    dl->AddLine(origin, endZ, colZ, 2.0f);
-    dl->AddText(ImVec2(endX.x + 5, endX.y), colX, "X");
-    dl->AddText(ImVec2(endY.x + 5, endY.y), colY, "Y");
-    dl->AddText(ImVec2(endZ.x + 5, endZ.y), colZ, "Z");
-}
-
-void CameraService::draw_grid_overlay_(int viewport_w, int viewport_h) {
-    // Draw world grid on Y=0 plane by projecting a finite region around the focus point
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const float3 eye = eye_position();
-    const float dist = length(eye - state_.target) + 1e-3f;
-    const float log10d = std::log10(std::max(1e-4f, dist));
-    const float step = std::pow(10.0f, std::floor(log10d) - 1.0f) * state_.units_per_meter; // adaptive step
-    const int lines = 40; // +/- 20 steps
-    const float range = step * (lines/2);
-    const float3 center = state_.target;
-    const float y = 0.0f; // ground plane
-
-    ImU32 colMinor = IM_COL32(160, 160, 160, 80);
-    ImU32 colMajor = IM_COL32(200, 200, 200, 120);
-
-    auto draw_world_line = [&](float3 a, float3 b){ float sx0, sy0, sx1, sy1; if (project_to_screen(a, view_, proj_, viewport_w, viewport_h, sx0, sy0) && project_to_screen(b, view_, proj_, viewport_w, viewport_h, sx1, sy1)) dl->AddLine(ImVec2(sx0, sy0), ImVec2(sx1, sy1), colMinor); };
-
-    for (int i = -lines/2; i <= lines/2; ++i) {
-        float x = center.x + i * step;
-        float z0 = center.z - range; float z1 = center.z + range;
-        float3 a{ x, y, z0 }; float3 b{ x, y, z1 };
-        draw_world_line(a,b);
-        float z = center.z + i * step;
-        float x0 = center.x - range; float x1 = center.x + range;
-        a = { x0, y, z }; b = { x1, y, z };
-        draw_world_line(a,b);
-    }
-
-    // Major axes X and Z lines
-    float sx0, sy0, sx1, sy1;
-    if (project_to_screen({center.x-range, y, center.z}, view_, proj_, viewport_w, viewport_h, sx0, sy0) && project_to_screen({center.x+range, y, center.z}, view_, proj_, viewport_w, viewport_h, sx1, sy1)) dl->AddLine(ImVec2(sx0, sy0), ImVec2(sx1, sy1), colMajor, 2.0f);
-    if (project_to_screen({center.x, y, center.z-range}, view_, proj_, viewport_w, viewport_h, sx0, sy0) && project_to_screen({center.x, y, center.z+range}, view_, proj_, viewport_w, viewport_h, sx1, sy1)) dl->AddLine(ImVec2(sx0, sy0), ImVec2(sx1, sy1), colMajor, 2.0f);
 }
 
 } // namespace vv
