@@ -216,8 +216,9 @@ void CameraService::update_orbit_drag_(int mx, int my, bool pan) {
     last_mx_ = mx; last_my_ = my;
     if (!pan) {
         constexpr float sens = 0.25f; // deg per pixel
-        state_.yaw_deg   += dx * sens; yaw_vel_ = dx * sens * 10.0f; // amplify for inertia
-        state_.pitch_deg -= dy * sens; pitch_vel_ = -dy * sens * 10.0f; // invert Y: move up -> pitch up
+        state_.yaw_deg   += dx * sens; yaw_vel_ = dx * sens * 10.0f;
+        // Change sign: mouse up (dy<0) -> pitch decreases -> look up
+        state_.pitch_deg += dy * sens; pitch_vel_ = dy * sens * 10.0f;
         state_.pitch_deg = std::clamp(state_.pitch_deg, -89.5f, 89.5f);
     } else {
         // Pan in screen space mapped to world (approximate)
@@ -225,8 +226,9 @@ void CameraService::update_orbit_drag_(int mx, int my, bool pan) {
         float pan_speed = base * 0.0015f * (key_shift_ ? 4.0f : 1.0f);
         float3 right = normalize(cross(normalize(float3{std::cos(deg2rad(state_.yaw_deg)), 0, std::sin(deg2rad(state_.yaw_deg))}), {0,1,0}));
         float3 up = float3{0,1,0};
-        state_.target = state_.target - right * (dx * pan_speed) - up * (dy * pan_speed); // invert vertical to follow mouse
-        pan_x_vel_ = -dx * pan_speed * 10.0f; pan_y_vel_ = -dy * pan_speed * 10.0f;
+        // Change sign so mouse up (dy<0) pans scene up (camera moves down)
+        state_.target = state_.target - right * (dx * pan_speed) + up * (dy * pan_speed);
+        pan_x_vel_ = -dx * pan_speed * 10.0f; pan_y_vel_ = dy * pan_speed * 10.0f;
     }
 }
 void CameraService::end_orbit_() {}
@@ -235,7 +237,8 @@ void CameraService::begin_fly_(int mx, int my, const EngineContext*) { last_mx_ 
 void CameraService::update_fly_look_(int dx, int dy) {
     constexpr float sens = 0.15f; // deg per pixel
     state_.fly_yaw_deg   += dx * sens;
-    state_.fly_pitch_deg -= dy * sens; // invert Y so up moves pitch up
+    // Change sign: mouse up (dy<0) -> pitch decreases -> look up
+    state_.fly_pitch_deg += dy * sens;
     state_.fly_pitch_deg  = std::clamp(state_.fly_pitch_deg, -89.0f, 89.0f);
 }
 void CameraService::end_fly_(const EngineContext*) { fly_capturing_ = false; }
@@ -541,9 +544,9 @@ void CameraService::imgui_draw_mini_axis_gizmo(int margin_px, int size_px, float
 
     auto rot_mul = [&](const float3& v) -> float3 {
         // 使用视图矩阵的旋转部分将世界坐标轴变换到视图空间
-        float x = view_.m[0]*v.x + view_.m[4]*v.y + view_.m[8]*v.z;
-        float y = view_.m[1]*v.x + view_.m[5]*v.y + view_.m[9]*v.z;
-        float z = view_.m[2]*v.x + view_.m[6]*v.y + view_.m[10]*v.z;
+        float x = view_.m[0]*v.x + view_.m[4]*v.y + view_.m[8]*v.z + view_.m[12]*1;
+        float y = view_.m[1]*v.x + view_.m[5]*v.y + view_.m[9]*v.z + view_.m[13]*1;
+        float z = view_.m[2]*v.x + view_.m[6]*v.y + view_.m[10]*v.z + view_.m[14]*1;
         return {x,y,z};
     };
 
