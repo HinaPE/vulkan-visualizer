@@ -87,6 +87,8 @@ public:
         // initial camera
         cam_.set_mode(vv::CameraMode::Orbit);
         vv::CameraState s = cam_.state(); s.target = {0,0,0}; s.distance = 3.5f; s.pitch_deg = 20.0f; s.yaw_deg = -30.0f; s.znear = 0.01f; s.zfar = 100.0f; cam_.set_state(s);
+        // Scene bounds for frame (unit cube around origin)
+        cam_.set_scene_bounds(vv::BoundingBox{ .min = {-1.f,-1.f,-1.f}, .max = {1.f,1.f,1.f}, .valid = true });
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override {
@@ -140,8 +142,8 @@ public:
         auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
         if (!host) return;
         host->add_tab("3D Viewport", []{
-            ImGui::Text("Use RMB to rotate, MMB/Ctrl+RMB to pan, wheel to zoom.");
-            ImGui::Text("WASD/QE to move in Fly mode (toggle in Camera panel).");
+            ImGui::Text("Houdini-style: Hold Space or Alt + LMB to orbit, MMB to pan, RMB to dolly.");
+            ImGui::Text("Wheel to zoom. Hotkeys: H=Home, F=Frame. Fly mode: WASD/QE + RMB look.");
         });
         host->add_tab("Camera", [this]{
             cam_.imgui_panel_contents();

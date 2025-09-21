@@ -114,6 +114,13 @@ public:
     void imgui_panel(bool* p_open = nullptr);
     void imgui_panel_contents();
 
+    // Scene bounds for framing (optional). If not set (valid=false), F will fall back to home.
+    void set_scene_bounds(const BoundingBox& bbox) { scene_bounds_ = bbox; }
+
+    // Houdini-style helpers (optional hotkeys)
+    void home_view(); // Reset to a reasonable default orbit view
+    void frame_scene(float padding = 1.1f); // Fit to scene_bounds_ if valid, else home
+
 private:
     // Internals
     void recompute_cached_();
@@ -143,6 +150,10 @@ private:
     // Input state
     bool rmb_{false}, mmb_{false}, lmb_{false};
     bool key_w_{false}, key_a_{false}, key_s_{false}, key_d_{false}, key_q_{false}, key_e_{false}, key_shift_{false}, key_ctrl_{false};
+    // Houdini-style navigation modifiers/state
+    bool key_space_{false}, key_alt_{false};
+    bool nav_orbiting_{false}, nav_panning_{false}, nav_dollying_{false};
+
     int last_mx_{0}, last_my_{0};
     bool fly_capturing_{false};
 
@@ -160,6 +171,9 @@ private:
     float anim_dur_{0.0f};
     CameraState anim_from_{};
     CameraState anim_to_{};
+
+    // Scene bounds (optional)
+    BoundingBox scene_bounds_{};
 };
 
 } // namespace vv

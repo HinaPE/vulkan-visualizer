@@ -214,15 +214,16 @@ void CameraService::update_orbit_drag_(int mx, int my, bool pan) {
     if (!pan) {
         constexpr float sens = 0.25f; // deg per pixel
         state_.yaw_deg   += dx * sens; yaw_vel_ = dx * sens * 10.0f; // amplify for inertia
-        state_.pitch_deg += dy * sens; pitch_vel_ = dy * sens * 10.0f;
+        state_.pitch_deg -= dy * sens; pitch_vel_ = -dy * sens * 10.0f; // invert Y: move up -> pitch up
         state_.pitch_deg = std::clamp(state_.pitch_deg, -89.5f, 89.5f);
     } else {
         // Pan in screen space mapped to world (approximate)
-        float pan_speed = state_.distance * 0.0015f * (key_shift_ ? 4.0f : 1.0f);
+        float base = (state_.projection == CameraProjection::Orthographic) ? std::max(1e-4f, state_.ortho_height) : std::max(1e-4f, state_.distance);
+        float pan_speed = base * 0.0015f * (key_shift_ ? 4.0f : 1.0f);
         float3 right = normalize(cross(normalize(float3{std::cos(deg2rad(state_.yaw_deg)), 0, std::sin(deg2rad(state_.yaw_deg))}), {0,1,0}));
         float3 up = float3{0,1,0};
-        state_.target = state_.target - right * (dx * pan_speed) + up * (dy * pan_speed);
-        pan_x_vel_ = -dx * pan_speed * 10.0f; pan_y_vel_ = dy * pan_speed * 10.0f;
+        state_.target = state_.target - right * (dx * pan_speed) - up * (dy * pan_speed); // invert vertical to follow mouse
+        pan_x_vel_ = -dx * pan_speed * 10.0f; pan_y_vel_ = -dy * pan_speed * 10.0f;
     }
 }
 void CameraService::end_orbit_() {}
@@ -231,22 +232,58 @@ void CameraService::begin_fly_(int mx, int my, const EngineContext*) { last_mx_ 
 void CameraService::update_fly_look_(int dx, int dy) {
     constexpr float sens = 0.15f; // deg per pixel
     state_.fly_yaw_deg   += dx * sens;
-    state_.fly_pitch_deg += dy * sens;
+    state_.fly_pitch_deg -= dy * sens; // invert Y so up moves pitch up
     state_.fly_pitch_deg  = std::clamp(state_.fly_pitch_deg, -89.0f, 89.0f);
 }
 void CameraService::end_fly_(const EngineContext*) { fly_capturing_ = false; }
 
 void CameraService::apply_inertia_(double dt) {
     const float damp = std::exp(-static_cast<float>(dt) * 6.0f);
-    if (!(rmb_ || mmb_) && state_.mode == CameraMode::Orbit) {
+    // Stop inertia while actively interacting (any mouse or nav)
+    if (!(lmb_ || rmb_ || mmb_ || nav_orbiting_ || nav_panning_ || nav_dollying_) && state_.mode == CameraMode::Orbit) {
         state_.yaw_deg   += yaw_vel_ * static_cast<float>(dt);
         state_.pitch_deg += pitch_vel_ * static_cast<float>(dt);
         state_.pitch_deg = std::clamp(state_.pitch_deg, -89.5f, 89.5f);
         state_.target.x  += pan_x_vel_ * static_cast<float>(dt);
         state_.target.y  += pan_y_vel_ * static_cast<float>(dt);
-        state_.distance  *= (1.0f + zoom_vel_ * static_cast<float>(dt));
+        if (state_.projection == CameraProjection::Perspective) {
+            state_.distance  *= (1.0f + zoom_vel_ * static_cast<float>(dt));
+        } else {
+            state_.ortho_height *= (1.0f + zoom_vel_ * static_cast<float>(dt));
+            state_.ortho_height = std::clamp(state_.ortho_height, 1e-4f, 1e6f);
+        }
         yaw_vel_ *= damp; pitch_vel_ *= damp; pan_x_vel_ *= damp; pan_y_vel_ *= damp; zoom_vel_ *= damp;
     }
+}
+
+void CameraService::home_view() {
+    CameraState dst = state_;
+    dst.mode = CameraMode::Orbit;
+    dst.target = {0,0,0};
+    dst.yaw_deg = -45.0f;
+    dst.pitch_deg = 25.0f;
+    // choose distance so that 1-unit object is nicely visible
+    const float fov = deg2rad(std::max(1.0f, dst.fov_y_deg));
+    const float target_radius = 1.0f;
+    dst.distance = std::max(target_radius / std::max(1e-4f, std::tan(fov*0.5f)) * 2.2f, 0.1f);
+    start_animation_to_(dst, 0.35f);
+}
+
+void CameraService::frame_scene(float padding) {
+    if (!scene_bounds_.valid) { home_view(); return; }
+    CameraState dst = state_;
+    // Compute fitted distance/height but keep yaw/pitch
+    float3 c = (scene_bounds_.min + scene_bounds_.max) * 0.5f;
+    float3 e = (scene_bounds_.max - scene_bounds_.min) * 0.5f;
+    const float radius = length(e) * padding;
+    dst.target = c;
+    if (dst.projection == CameraProjection::Perspective) {
+        const float fov = deg2rad(std::max(1.0f, dst.fov_y_deg));
+        dst.distance = std::max(radius / std::max(1e-4f, std::tan(fov*0.5f)), 1e-3f);
+    } else {
+        dst.ortho_height = std::max(radius, 1e-3f);
+    }
+    start_animation_to_(dst, 0.35f);
 }
 
 void CameraService::handle_event(const SDL_Event& e, const EngineContext* eng, const FrameContext*) {
@@ -255,27 +292,59 @@ void CameraService::handle_event(const SDL_Event& e, const EngineContext* eng, c
     if (ImGui::GetCurrentContext()) io = &ImGui::GetIO();
     auto imgui_capturing_mouse = [&]() { return io && (io->WantCaptureMouse || io->WantCaptureKeyboard); };
 
+    auto houdini_nav_active = [&]() { return (key_space_ || key_alt_) && state_.mode == CameraMode::Orbit; };
+
     switch (e.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         if (imgui_capturing_mouse()) break;
         const int mx = e.button.x; const int my = e.button.y;
-        if (e.button.button == SDL_BUTTON_RIGHT) { rmb_ = true; if (state_.mode == CameraMode::Orbit) begin_orbit_(mx, my); else begin_fly_(mx,my,eng); }
-        if (e.button.button == SDL_BUTTON_MIDDLE) { mmb_ = true; begin_orbit_(mx, my); }
-        if (e.button.button == SDL_BUTTON_LEFT) { lmb_ = true; }
+        if (e.button.button == SDL_BUTTON_LEFT)  { lmb_ = true; }
+        if (e.button.button == SDL_BUTTON_MIDDLE){ mmb_ = true; }
+        if (e.button.button == SDL_BUTTON_RIGHT) { rmb_ = true; }
+        if (houdini_nav_active()) {
+            // Space/Alt + LMB/MMB/RMB => orbit/pan/dolly
+            last_mx_ = mx; last_my_ = my;
+            nav_orbiting_ = (e.button.button == SDL_BUTTON_LEFT);
+            nav_panning_  = (e.button.button == SDL_BUTTON_MIDDLE);
+            nav_dollying_ = (e.button.button == SDL_BUTTON_RIGHT);
+        } else {
+            // No legacy orbit mapping. Only allow Fly-mode RMB look.
+            if (state_.mode == CameraMode::Fly) {
+                if (rmb_) begin_fly_(mx, my, eng);
+            }
+        }
         break; }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         const int mx = e.button.x; const int my = e.button.y;
-        if (e.button.button == SDL_BUTTON_RIGHT) { rmb_ = false; if (state_.mode == CameraMode::Orbit) end_orbit_(); else end_fly_(eng); }
-        if (e.button.button == SDL_BUTTON_MIDDLE) { mmb_ = false; end_orbit_(); }
-        if (e.button.button == SDL_BUTTON_LEFT) { lmb_ = false; }
+        if (e.button.button == SDL_BUTTON_LEFT)  { lmb_ = false; nav_orbiting_ = false; }
+        if (e.button.button == SDL_BUTTON_MIDDLE){ mmb_ = false; nav_panning_  = false; }
+        if (e.button.button == SDL_BUTTON_RIGHT) { rmb_ = false; nav_dollying_ = false; if (state_.mode == CameraMode::Fly) end_fly_(eng); }
+        // Do not end_orbit_ based on legacy paths; Houdini drag uses update_orbit_drag_
         last_mx_ = mx; last_my_ = my; break; }
     case SDL_EVENT_MOUSE_MOTION: {
         if (imgui_capturing_mouse()) break;
         const int mx = e.motion.x; const int my = e.motion.y; const int dx = e.motion.xrel; const int dy = e.motion.yrel;
-        if (state_.mode == CameraMode::Orbit) {
-            if (rmb_ || mmb_) update_orbit_drag_(mx, my, mmb_ || key_ctrl_);
+        if (houdini_nav_active()) {
+            if (nav_orbiting_) {
+                update_orbit_drag_(mx, my, false);
+            } else if (nav_panning_) {
+                update_orbit_drag_(mx, my, true);
+            } else if (nav_dollying_) {
+                // Dolly using vertical motion; exponential scale for stability
+                const float factor = std::exp(dy * 0.01f * (key_shift_ ? 2.0f : 1.0f));
+                if (state_.projection == CameraProjection::Perspective) {
+                    state_.distance = std::clamp(state_.distance * factor, 1e-4f, 1e6f);
+                } else {
+                    state_.ortho_height = std::clamp(state_.ortho_height * factor, 1e-4f, 1e6f);
+                }
+                zoom_vel_ = (factor - 1.0f) * 4.0f;
+                last_mx_ = mx; last_my_ = my;
+            }
         } else {
-            if (rmb_) update_fly_look_(dx, dy);
+            // Orbit mode without Houdini modifiers: ignore mouse motions.
+            if (state_.mode == CameraMode::Fly) {
+                if (rmb_) update_fly_look_(dx, dy);
+            }
         }
         break; }
     case SDL_EVENT_MOUSE_WHEEL: {
@@ -283,25 +352,38 @@ void CameraService::handle_event(const SDL_Event& e, const EngineContext* eng, c
         const float scroll = static_cast<float>(e.wheel.y);
         if (state_.mode == CameraMode::Orbit) {
             float z = std::exp(-scroll * 0.1f * (key_shift_ ? 2.0f : 1.0f));
-            state_.distance = std::clamp(state_.distance * z, 1e-4f, 1e6f);
+            if (state_.projection == CameraProjection::Perspective) {
+                state_.distance = std::clamp(state_.distance * z, 1e-4f, 1e6f);
+            } else {
+                state_.ortho_height = std::clamp(state_.ortho_height * z, 1e-4f, 1e6f);
+            }
             zoom_vel_ += (-scroll * 0.25f);
         } else {
             // Fly: adjust znear/zfar or speed indirectly (ignore for now)
         }
         break; }
     case SDL_EVENT_KEY_DOWN: {
+        if (io && io->WantCaptureKeyboard) break;
         const SDL_Keycode k = e.key.key;
         if (k == SDLK_W) key_w_ = true; if (k == SDLK_A) key_a_ = true; if (k == SDLK_S) key_s_ = true; if (k == SDLK_D) key_d_ = true;
         if (k == SDLK_Q) key_q_ = true; if (k == SDLK_E) key_e_ = true;
         if (k == SDLK_LSHIFT || k == SDLK_RSHIFT) key_shift_ = true;
         if (k == SDLK_LCTRL  || k == SDLK_RCTRL)  key_ctrl_  = true;
+        if (k == SDLK_SPACE) key_space_ = true;
+        if (k == SDLK_LALT || k == SDLK_RALT) key_alt_ = true;
+        // Houdini hotkeys
+        if (k == SDLK_H) { home_view(); }
+        if (k == SDLK_F) { frame_scene(); }
         break; }
     case SDL_EVENT_KEY_UP: {
+        if (io && io->WantCaptureKeyboard) break;
         const SDL_Keycode k = e.key.key;
         if (k == SDLK_W) key_w_ = false; if (k == SDLK_A) key_a_ = false; if (k == SDLK_S) key_s_ = false; if (k == SDLK_D) key_d_ = false;
         if (k == SDLK_Q) key_q_ = false; if (k == SDLK_E) key_e_ = false;
         if (k == SDLK_LSHIFT || k == SDLK_RSHIFT) key_shift_ = false;
         if (k == SDLK_LCTRL  || k == SDLK_RCTRL)  key_ctrl_  = false;
+        if (k == SDLK_SPACE) { key_space_ = false; nav_orbiting_ = nav_panning_ = nav_dollying_ = false; }
+        if (k == SDLK_LALT || k == SDLK_RALT) { key_alt_ = false; nav_orbiting_ = nav_panning_ = nav_dollying_ = false; }
         break; }
     default: break;
     }
@@ -430,6 +512,10 @@ void CameraService::imgui_panel_contents() {
     ImGui::InputText("File", pathbuf, sizeof(pathbuf));
     if (ImGui::Button("Save")) { (void)save_to_file(pathbuf); }
     ImGui::SameLine(); if (ImGui::Button("Load")) { (void)load_from_file(pathbuf); }
+
+    // Quick actions
+    if (ImGui::Button("Home (H)")) home_view();
+    ImGui::SameLine(); if (ImGui::Button("Frame (F)")) frame_scene();
 
     recompute_cached_();
 }
