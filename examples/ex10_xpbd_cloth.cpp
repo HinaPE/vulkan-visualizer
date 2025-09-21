@@ -99,19 +99,16 @@ public:
         struct PC { float mvp[16]; float color[4]; float pointSize; float _pad[3]; } pc{};
         std::memcpy(pc.mvp, MVP.m.data(), sizeof(pc.mvp));
         VkDeviceSize offs = 0; vkCmdBindVertexBuffers(cmd, 0, 1, &pos_buf_.buf, &offs);
-        if (params_.render_mode == 0 /*Mesh*/){
+        // Draw mesh (triangles)
+        if (params_.show_mesh){
             pc.color[0]=0.55f; pc.color[1]=0.7f; pc.color[2]=0.95f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_tri_.pipeline);
             vkCmdPushConstants(cmd, pipe_tri_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
             vkCmdBindIndexBuffer(cmd, tri_idx_.buf, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(cmd, tri_count_, 1, 0, 0, 0);
-        } else if (params_.render_mode == 1 /*Vertices*/){
-            pc.color[0]=1.0f; pc.color[1]=1.0f; pc.color[2]=1.0f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_point_.pipeline);
-            vkCmdPushConstants(cmd, pipe_point_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
-            vkCmdDraw(cmd, (uint32_t)cloth_.x.size(), 1, 0, 0);
-        } else { // Constraints
-            // Structural lines
+        }
+        // Draw constraints (lines)
+        if (params_.show_constraints){
             pc.pointSize = params_.point_size;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_line_.pipeline);
             // struct
@@ -123,6 +120,13 @@ public:
             // bend
             pc.color[0]=1.0f; pc.color[1]=0.78f; pc.color[2]=0.4f; pc.color[3]=1.0f; vkCmdPushConstants(cmd, pipe_line_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
             if (line_bend_count_>0) { vkCmdBindIndexBuffer(cmd, line_bend_.buf, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cmd, line_bend_count_, 1, 0, 0, 0); }
+        }
+        // Draw vertices (points)
+        if (params_.show_vertices){
+            pc.color[0]=1.0f; pc.color[1]=1.0f; pc.color[2]=1.0f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_point_.pipeline);
+            vkCmdPushConstants(cmd, pipe_point_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
+            vkCmdDraw(cmd, (uint32_t)cloth_.x.size(), 1, 0, 0);
         }
         vkCmdEndRendering(cmd);
         barrier_img(color.image, color.aspect, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -139,7 +143,10 @@ public:
             ImGui::Text("XPBD cloth (CPU sim + Vulkan draw)"); ImGui::Separator();
             ImGui::Checkbox("Simulate", &params_.simulate); ImGui::SameLine(); if (ImGui::Button("Step")) { step_sim_(std::clamp<float>((float)params_.fixed_dt, 1.f/600.f, 1.f/30.f)); }
             ImGui::SameLine(); if (ImGui::Button("Reset")) { cloth_.build_grid(params_.grid_x, params_.grid_y, params_.spacing); apply_compliance_(); recenter_cloth_at_origin_(); rebuild_indices_only_(); update_scene_bounds_(); cam_.frame_scene(1.12f); }
-            ImGui::RadioButton("Mesh", &params_.render_mode, 0); ImGui::SameLine(); ImGui::RadioButton("Vertices", &params_.render_mode, 1); ImGui::SameLine(); ImGui::RadioButton("Constraints", &params_.render_mode, 2);
+            // View toggles
+            ImGui::Checkbox("Mesh", &params_.show_mesh); ImGui::SameLine();
+            ImGui::Checkbox("Vertices", &params_.show_vertices); ImGui::SameLine();
+            ImGui::Checkbox("Constraints", &params_.show_constraints);
             ImGui::SliderFloat("Point Size", &params_.point_size, 1.0f, 12.0f);
             ImGui::SliderFloat("Fixed dt (s)", &params_.fixed_dt, 1.0f/240.0f, 1.0f/30.0f, "%.4f");
             ImGui::SliderInt("Substeps", &params_.substeps, 1, 8); ImGui::SliderInt("Iterations", &params_.iterations, 1, 40);
@@ -153,7 +160,7 @@ public:
     }
 
 private:
-    struct Params { bool simulate{false}; float fixed_dt{1.0f/120.0f}; int substeps{2}; int iterations{10}; float damping{0.02f}; vv::float3 gravity{0.0f,-9.8f,0.0f}; int grid_x{20}, grid_y{20}; float spacing{0.06f}; float comp_struct{0.0f}; float comp_shear{0.0f}; float comp_bend{0.005f}; int render_mode{0}; float point_size{5.0f}; } params_{};
+    struct Params { bool simulate{false}; float fixed_dt{1.0f/120.0f}; int substeps{2}; int iterations{10}; float damping{0.02f}; vv::float3 gravity{0.0f,-9.8f,0.0f}; int grid_x{20}, grid_y{20}; float spacing{0.06f}; float comp_struct{0.0f}; float comp_shear{0.0f}; float comp_bend{0.005f}; bool show_mesh{true}; bool show_vertices{true}; bool show_constraints{true}; float point_size{5.0f}; } params_{};
 
     vv::CameraService cam_{}; ClothXPBD cloth_{}; double sim_accum_{0.0}; int vp_w_{0}, vp_h_{0};
 
