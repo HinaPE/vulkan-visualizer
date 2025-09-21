@@ -114,6 +114,9 @@ public:
     void imgui_panel(bool* p_open = nullptr);
     void imgui_panel_contents();
 
+    // Mini axis gizmo (top-right overlay)
+    void imgui_draw_mini_axis_gizmo(int margin_px = 12, int size_px = 96, float thickness = 2.0f) const;
+
     // Scene bounds for framing (optional). If not set (valid=false), F will fall back to home.
     void set_scene_bounds(const BoundingBox& bbox) { scene_bounds_ = bbox; }
 

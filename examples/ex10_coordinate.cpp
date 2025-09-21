@@ -154,6 +154,10 @@ public:
 
     void on_imgui(const EngineContext& eng, const FrameContext& f) override {
         auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (host) {
+            host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); });
+        }
+
         if (!host) return;
         host->add_tab("Coordinate Check", [this,&f]{
             ImGui::Text("Houdini-style camera: Hold Space/Alt + LMB orbit, MMB pan, RMB dolly.");

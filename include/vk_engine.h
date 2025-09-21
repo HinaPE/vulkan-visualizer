@@ -19,6 +19,8 @@ struct TabsHost {
     virtual ~TabsHost() = default;
     virtual void add_tab(const char* name, std::function<void()> fn) = 0;     // per-frame ephemeral tabs
     virtual void set_main_window_title(const char* title) = 0;                // optional
+    // New: per-frame overlay callbacks (drawn after tabs, before ImGui::Render)
+    virtual void add_overlay(std::function<void()> fn) = 0;
 };
 } // namespace vv_ui
 

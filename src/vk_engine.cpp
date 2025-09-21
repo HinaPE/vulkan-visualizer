@@ -180,6 +180,10 @@ struct VulkanEngine::UiSystem : vv_ui::TabsHost {
     void set_main_window_title(const char* title) override {
         if (title) main_title_ = title;
     }
+    void add_overlay(std::function<void()> fn) override {
+        if (!fn) return;
+        frame_overlays_.push_back(std::move(fn));
+    }
 
     // Allow engine to update backend min image count on swapchain changes
     void set_min_image_count(uint32_t count) {
@@ -217,6 +221,8 @@ struct VulkanEngine::UiSystem : vv_ui::TabsHost {
 
         // Build tabs UI right before Render()
         draw_tabs_ui();
+        // Invoke per-frame overlays so they draw on the foreground draw list before Render()
+        for (auto& fn : frame_overlays_) { fn(); }
 
         VkImageMemoryBarrier2 to_color{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -305,8 +311,9 @@ struct VulkanEngine::UiSystem : vv_ui::TabsHost {
         };
         vkCmdPipelineBarrier2(cmd, &dep_present);
 
-        // Clear per-frame tabs after rendering
+        // Clear per-frame tabs and overlays after rendering
         frame_tabs_.clear();
+        frame_overlays_.clear();
     }
 
     // Legacy methods (unused externally now); kept for internal calls if needed
@@ -319,6 +326,7 @@ private:
     std::string main_title_{"Vulkan Visualizer"};
     std::vector<std::pair<std::string, PanelFn>> persistent_tabs_{};
     std::vector<std::pair<std::string, PanelFn>> frame_tabs_{};
+    std::vector<PanelFn> frame_overlays_{};
 };
 
 void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios) {

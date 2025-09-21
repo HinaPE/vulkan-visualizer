@@ -468,14 +468,14 @@ void CameraService::imgui_panel(bool* p_open) {
 
 void CameraService::imgui_panel_contents() {
     int mode = (state_.mode == CameraMode::Orbit) ? 0 : 1;
-    if (ImGui::RadioButton("Orbit", mode==0)) { mode=0; set_mode(CameraMode::Orbit); }
+    if (ImGui::RadioButton("Orbit", mode==0)) { set_mode(CameraMode::Orbit); }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Fly", mode==1))   { mode=1; set_mode(CameraMode::Fly); }
+    if (ImGui::RadioButton("Fly", mode==1))   { set_mode(CameraMode::Fly); }
 
     int proj = (state_.projection == CameraProjection::Perspective) ? 0 : 1;
-    if (ImGui::RadioButton("Perspective", proj==0)) { proj=0; set_projection(CameraProjection::Perspective); }
+    if (ImGui::RadioButton("Perspective", proj==0)) { set_projection(CameraProjection::Perspective); }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Orthographic", proj==1)) { proj=1; set_projection(CameraProjection::Orthographic); }
+    if (ImGui::RadioButton("Orthographic", proj==1)) { set_projection(CameraProjection::Orthographic); }
 
     ImGui::SeparatorText("Params");
     ImGui::DragFloat("FOV Y (deg)", &state_.fov_y_deg, 0.1f, 10.0f, 120.0f);
@@ -518,6 +518,60 @@ void CameraService::imgui_panel_contents() {
     ImGui::SameLine(); if (ImGui::Button("Frame (F)")) frame_scene();
 
     recompute_cached_();
+}
+
+void CameraService::imgui_draw_mini_axis_gizmo(int margin_px, int size_px, float thickness) const {
+    if (!ImGui::GetCurrentContext()) return;
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+    ImDrawList* draw = ImGui::GetForegroundDrawList(vp);
+
+    const float s   = static_cast<float>(std::max(16, size_px));
+    const float pad = static_cast<float>(std::max(0, margin_px));
+    // Anchor to main viewport's top-right (screen space)
+    const ImVec2 center(vp->Pos.x + vp->Size.x - pad - s * 0.5f, vp->Pos.y + pad + s * 0.5f);
+    const float R = s * 0.42f;
+
+    // Background disk + outline（稍亮一点，避免与背景混淆）
+    draw->AddCircleFilled(center, s * 0.5f, IM_COL32(20, 22, 26, 180), 48);
+    draw->AddCircle(center, s * 0.5f, IM_COL32(255, 255, 255, 60), 48, 1.0f);
+
+    auto rot_mul = [&](const float3& v) -> float3 {
+        // 使用视图矩阵的旋转部分将世界坐标轴变换到视图空间
+        float x = view_.m[0]*v.x + view_.m[4]*v.y + view_.m[8]*v.z;
+        float y = view_.m[1]*v.x + view_.m[5]*v.y + view_.m[9]*v.z;
+        float z = view_.m[2]*v.x + view_.m[6]*v.y + view_.m[10]*v.z;
+        return {x,y,z};
+    };
+
+    struct AxisInfo { float3 v; ImU32 col; const char* label; };
+    AxisInfo A[3] = {
+        AxisInfo{ {1,0,0}, IM_COL32(255,  80,  80, 255), "X" },
+        AxisInfo{ {0,1,0}, IM_COL32( 80, 255,  80, 255), "Y" },
+        AxisInfo{ {0,0,1}, IM_COL32( 80, 120, 255, 255), "Z" },
+    };
+
+    struct Item { float3 vv; AxisInfo a; };
+    Item items[3] = { Item{rot_mul(A[0].v), A[0]}, Item{rot_mul(A[1].v), A[1]}, Item{rot_mul(A[2].v), A[2]} };
+
+    auto draw_axis = [&](const Item& it, bool dim){
+        const ImU32 base = it.a.col;
+        const ImU32 col  = dim ? IM_COL32((base>>IM_COL32_R_SHIFT)&0xFF, (base>>IM_COL32_G_SHIFT)&0xFF, (base>>IM_COL32_B_SHIFT)&0xFF, 120)
+                               : base;
+        ImVec2 p1 = center;
+        ImVec2 p2 = ImVec2(center.x + it.vv.x * R, center.y - it.vv.y * R); // 注意 ImGui Y 向下
+        draw->AddLine(p1, p2, col, thickness);
+        // 端点小圆点
+        draw->AddCircleFilled(p2, s*0.018f + (dim?0.0f:0.6f), col, 12);
+        // 标签放在端点略外侧
+        const float lx = (it.vv.x>=0? 4.0f : -16.0f);
+        const float ly = (it.vv.y>=0? -14.0f:  2.0f);
+        draw->AddText(ImVec2(p2.x + lx, p2.y + ly), col, it.a.label);
+    };
+
+    // 背面（视图空间 z>0）先画，正面后画，保证遮挡关系
+    for (const auto& it : items) if (it.vv.z >  0.0f) draw_axis(it, true);
+    for (const auto& it : items) if (it.vv.z <= 0.0f) draw_axis(it, false);
 }
 
 } // namespace vv

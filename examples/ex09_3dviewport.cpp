@@ -140,6 +140,10 @@ public:
 
     void on_imgui(const EngineContext& eng, const FrameContext& f) override {
         auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (host) {
+            host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); });
+        }
+
         if (!host) return;
         host->add_tab("3D Viewport", []{
             ImGui::Text("Houdini-style: Hold Space or Alt + LMB to orbit, MMB to pan, RMB to dolly.");
