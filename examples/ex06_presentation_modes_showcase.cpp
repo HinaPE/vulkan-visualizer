@@ -2,15 +2,13 @@
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 #include <fstream>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
 #ifndef VK_CHECK
-#define VK_CHECK(x) do{VkResult r=(x);if(r!=VK_SUCCESS)throw std::runtime_error("Vulkan error: "+std::to_string(r));}while(false)
+#define VK_CHECK(x) do{VkResult r=(x);if(r!=VK_SUCCESS)throw std::runtime_error("vk: "+std::to_string(r));}while(false)
 #endif
-static std::vector<char> load_spv(const std::string& p)
+static std::vector<char> rd(const std::string& p)
 {
     std::ifstream f(p, std::ios::binary | std::ios::ate);
     if (!f)throw std::runtime_error("open " + p);
@@ -21,7 +19,7 @@ static std::vector<char> load_spv(const std::string& p)
     return d;
 }
 
-static VkShaderModule make_shader(VkDevice d, const std::vector<char>& b)
+static VkShaderModule sh(VkDevice d, const std::vector<char>& b)
 {
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = b.size();
@@ -31,26 +29,24 @@ static VkShaderModule make_shader(VkDevice d, const std::vector<char>& b)
     return m;
 }
 
-class TriangleRenderer : public IRenderer
+class R : public IRenderer
 {
 public:
     void get_capabilities(const EngineContext&, RendererCaps& c) override
     {
         c = RendererCaps{};
         c.enable_imgui = true;
-        c.presentation_mode = PresentationMode::EngineBlit;
-        c.color_attachments = {AttachmentRequest{.name = "color"}};
-        c.presentation_attachment = "color";
+        c.presentation_mode = PresentationMode::RendererComposite;
     }
 
-    void initialize(const EngineContext& e, const RendererCaps& c, const FrameContext&) override
+    void initialize(const EngineContext& e, const RendererCaps&, const FrameContext& init) override
     {
         dev = e.device;
-        fmt = c.color_attachments.front().format;
-        std::string dir(SHADER_OUTPUT_DIR);
-        VkShaderModule vs = make_shader(dev, load_spv(dir + "/triangle.vert.spv")), fs = make_shader(dev, load_spv(dir + "/triangle.frag.spv"));
+        fmt = init.swapchain_format;
+        std::string d(SHADER_OUTPUT_DIR);
+        VkShaderModule vs = sh(dev, rd(d + "/triangle.vert.spv")), fs = sh(dev, rd(d + "/triangle.frag.spv"));
         VkPipelineShaderStageCreateInfo st[2]{};
-        for (int i = 0; i < 2; ++i)st[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        st[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         st[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         st[0].module = vs;
         st[0].pName = "main";
@@ -107,30 +103,25 @@ public:
         if (layout)vkDestroyPipelineLayout(e.device, layout, nullptr);
     }
 
-    void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override
+    void record_graphics(VkCommandBuffer, const EngineContext&, const FrameContext&) override
     {
-        if (!pipe || f.color_attachments.empty())return;
-        const auto& t = f.color_attachments.front();
-        auto b = [&](VkImageLayout a, VkImageLayout n, VkPipelineStageFlags2 s, VkPipelineStageFlags2 d, VkAccessFlags2 sa, VkAccessFlags2 da)
-        {
-            VkImageMemoryBarrier2 m{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-            m.srcStageMask = s;
-            m.dstStageMask = d;
-            m.srcAccessMask = sa;
-            m.dstAccessMask = da;
-            m.oldLayout = a;
-            m.newLayout = n;
-            m.image = t.image;
-            m.subresourceRange = {t.aspect, 0, 1, 0, 1};
-            VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            di.imageMemoryBarrierCount = 1;
-            di.pImageMemoryBarriers = &m;
-            vkCmdPipelineBarrier2(cmd, &di);
+    }
+
+    void compose(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override
+    {
+        if (!pipe || !f.swapchain_image || !f.swapchain_image_view)return;
+        VkImageMemoryBarrier2 to_ca{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_NONE, .srcAccessMask = 0, .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .image = f.swapchain_image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
         };
-        b(VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-        VkClearValue cv{.color = {{clear_[0], clear_[1], clear_[2], 1.0f}}};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &to_ca;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VkClearValue cv{.color = {{0.02f, 0.02f, 0.02f, 1}}};
         VkRenderingAttachmentInfo ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        ca.imageView = t.view;
+        ca.imageView = f.swapchain_image_view;
         ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -152,30 +143,31 @@ public:
         vkCmdSetScissor(cmd, 0, 1, &sc);
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);
-        b(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-          VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        VkImageMemoryBarrier2 to_tr{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .image = f.swapchain_image,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+        };
+        VkDependencyInfo dep2{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep2.imageMemoryBarrierCount = 1;
+        dep2.pImageMemoryBarriers = &to_tr;
+        vkCmdPipelineBarrier2(cmd, &dep2);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext& f) override
+    void on_imgui(const EngineContext&, const FrameContext&) override
     {
-        ImGui::Begin("Controls");
-        ImGui::Text("ex01_imgui_minimal_ui");
-        ImGui::SliderFloat3("clear", clear_, 0.0f, 1.0f);
-        ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
-        ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
-        ImGui::Text("Press F12 to screenshot");
-        ImGui::End();
-        ImGui::Begin("Log");
-        ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");
+        ImGui::Begin("presentation_modes");
+        ImGui::TextUnformatted("ex06_presentation_modes_showcase");
+        ImGui::BulletText("Mode: RendererComposite (custom compose)");
+        ImGui::TextUnformatted("Engine overlays ImGui after this pass.");
         ImGui::End();
     }
 
 private:
     VkDevice dev{};
+    VkFormat fmt{};
     VkPipelineLayout layout{};
     VkPipeline pipe{};
-    VkFormat fmt{};
-    float clear_[3]{0.05f, 0.07f, 0.12f};
 };
 
 int main()
@@ -183,8 +175,8 @@ int main()
     try
     {
         VulkanEngine e;
-        e.configure_window(1280, 720, "ex01_imgui_minimal_ui");
-        e.set_renderer(std::make_unique<TriangleRenderer>());
+        e.configure_window(1280, 720, "ex06_presentation_modes_showcase");
+        e.set_renderer(std::make_unique<R>());
         e.init();
         e.run();
         e.cleanup();

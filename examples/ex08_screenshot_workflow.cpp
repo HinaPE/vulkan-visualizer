@@ -35,6 +35,7 @@ public:
     void get_capabilities(const EngineContext&, RendererCaps& c) override
     {
         c = RendererCaps{};
+        c.enable_imgui = true;
         c.presentation_mode = PresentationMode::EngineBlit;
         c.color_attachments = {AttachmentRequest{.name = "color"}};
         c.presentation_attachment = "color";
@@ -45,7 +46,7 @@ public:
         dev = e.device;
         fmt = c.color_attachments.front().format;
         std::string d(SHADER_OUTPUT_DIR);
-        VkShaderModule vs = sh(dev, rd(d + "/triangle.vert.spv")), fs = sh(dev, rd(d + "/triangle.frag.spv"));
+        VkShaderModule vs = sh(dev, rd(d + "/pc_triangle.vert.spv")), fs = sh(dev, rd(d + "/pc_triangle.frag.spv"));
         VkPipelineShaderStageCreateInfo st[2]{};
         st[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         st[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -54,76 +55,70 @@ public:
         st[1] = st[0];
         st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         st[1].module = fs;
+        VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(P)};
         VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        lci.pushConstantRangeCount = 1;
+        lci.pPushConstantRanges = &pcr;
         VK_CHECK(vkCreatePipelineLayout(dev,&lci,nullptr,&layout));
-        auto makePipe = [&](VkPrimitiveTopology topo)
-        {
-            VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-            VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-            ia.topology = topo;
-            VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-            vp.viewportCount = 1;
-            vp.scissorCount = 1;
-            VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-            rs.polygonMode = VK_POLYGON_MODE_FILL;
-            rs.cullMode = VK_CULL_MODE_NONE;
-            rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-            rs.lineWidth = 1.0f;
-            VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-            ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-            VkPipelineColorBlendAttachmentState ba{};
-            ba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-            cb.attachmentCount = 1;
-            cb.pAttachments = &ba;
-            const VkDynamicState dyns[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-            VkPipelineDynamicStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-            ds.dynamicStateCount = 2;
-            ds.pDynamicStates = dyns;
-            VkPipelineRenderingCreateInfo r{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-            r.colorAttachmentCount = 1;
-            r.pColorAttachmentFormats = &fmt;
-            VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-            pci.pNext = &r;
-            pci.stageCount = 2;
-            pci.pStages = st;
-            pci.pVertexInputState = &vi;
-            pci.pInputAssemblyState = &ia;
-            pci.pViewportState = &vp;
-            pci.pRasterizationState = &rs;
-            pci.pMultisampleState = &ms;
-            pci.pColorBlendState = &cb;
-            pci.pDynamicState = &ds;
-            pci.layout = layout;
-            VkPipeline p{};
-            VK_CHECK(vkCreateGraphicsPipelines(dev,VK_NULL_HANDLE,1,&pci,nullptr,&p));
-            return p;
-        };
-        pipe_tri = makePipe(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-        pipe_line = makePipe(VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
-        pipe_point = makePipe(VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vp.viewportCount = 1;
+        vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+        rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState ba{};
+        ba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1;
+        cb.pAttachments = &ba;
+        const VkDynamicState dyns[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        ds.dynamicStateCount = 2;
+        ds.pDynamicStates = dyns;
+        VkPipelineRenderingCreateInfo r{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        r.colorAttachmentCount = 1;
+        r.pColorAttachmentFormats = &fmt;
+        VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        pci.pNext = &r;
+        pci.stageCount = 2;
+        pci.pStages = st;
+        pci.pVertexInputState = &vi;
+        pci.pInputAssemblyState = &ia;
+        pci.pViewportState = &vp;
+        pci.pRasterizationState = &rs;
+        pci.pMultisampleState = &ms;
+        pci.pColorBlendState = &cb;
+        pci.pDynamicState = &ds;
+        pci.layout = layout;
+        VK_CHECK(vkCreateGraphicsPipelines(dev,VK_NULL_HANDLE,1,&pci,nullptr,&pipe));
         vkDestroyShaderModule(dev, vs, nullptr);
         vkDestroyShaderModule(dev, fs, nullptr);
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override
     {
-        for (auto& p : {pipe_tri, pipe_line, pipe_point})if (p)vkDestroyPipeline(e.device, p, nullptr);
+        if (pipe)vkDestroyPipeline(e.device, pipe, nullptr);
         if (layout)vkDestroyPipelineLayout(e.device, layout, nullptr);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void update(const EngineContext&, const FrameContext& f) override
     {
-        ImGui::Begin("hello_primitives");
-        ImGui::Checkbox("tri", &show_tri);
-        ImGui::Checkbox("line", &show_line);
-        ImGui::Checkbox("point", &show_point);
-        ImGui::End();
+        float t = float(f.time_sec);
+        tint[0] = 0.5f + 0.5f * sinf(t * 0.9f);
+        tint[1] = 0.5f + 0.5f * sinf(t * 1.1f + 1.57f);
+        tint[2] = 0.5f + 0.5f * sinf(t * 1.3f + 3.14f);
     }
 
     void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override
     {
-        if (f.color_attachments.empty())return;
+        if (!pipe || f.color_attachments.empty())return;
         const auto& t = f.color_attachments.front();
         auto B = [&](VkImageLayout a, VkImageLayout n, VkPipelineStageFlags2 s, VkPipelineStageFlags2 d, VkAccessFlags2 sa, VkAccessFlags2 da)
         {
@@ -142,7 +137,7 @@ public:
             vkCmdPipelineBarrier2(cmd, &di);
         };
         B(VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-        VkClearValue cv{.color = {{0.03f, 0.03f, 0.05f, 1}}};
+        VkClearValue cv{.color = {{0.01f, 0.01f, 0.01f, 1}}};
         VkRenderingAttachmentInfo ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         ca.imageView = t.view;
         ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -155,6 +150,9 @@ public:
         ri.colorAttachmentCount = 1;
         ri.pColorAttachments = &ca;
         vkCmdBeginRendering(cmd, &ri);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        P pc{{tint[0], tint[1], tint[2], 1}};
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(P), &pc);
         VkViewport vp{};
         vp.width = float(f.extent.width);
         vp.height = float(f.extent.height);
@@ -163,32 +161,33 @@ public:
         VkRect2D sc{{0, 0}, f.extent};
         vkCmdSetViewport(cmd, 0, 1, &vp);
         vkCmdSetScissor(cmd, 0, 1, &sc);
-        if (show_tri)
-        {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_tri);
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-        }
-        if (show_line)
-        {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_line);
-            vkCmdDraw(cmd, 2, 1, 0, 0);
-        }
-        if (show_point)
-        {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_point);
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-        }
+        vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);
         B(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
+    void on_imgui(const EngineContext&, const FrameContext& f) override
+    {
+        ImGui::Begin("screenshot_workflow");
+        ImGui::TextUnformatted("ex08_screenshot_workflow");
+        ImGui::BulletText("Press PrintScreen or use Controls->Screenshot");
+        ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
+        ImGui::Text("Time %.2f s", f.time_sec);
+        ImGui::End();
+    }
+
 private:
+    struct P
+    {
+        float tint[4];
+    };
+
     VkDevice dev{};
     VkFormat fmt{};
     VkPipelineLayout layout{};
-    VkPipeline pipe_tri{}, pipe_line{}, pipe_point{};
-    bool show_tri = true, show_line = true, show_point = true;
+    VkPipeline pipe{};
+    float tint[3]{1, 1, 1};
 };
 
 int main()
@@ -196,7 +195,7 @@ int main()
     try
     {
         VulkanEngine e;
-        e.configure_window(1280, 720, "ex03_hello_primitives");
+        e.configure_window(1280, 720, "ex08_screenshot_workflow");
         e.set_renderer(std::make_unique<R>());
         e.init();
         e.run();

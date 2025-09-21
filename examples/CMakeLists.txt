@@ -11,11 +11,11 @@ if (NOT GLSLC)
 endif ()
 
 set(SHADERS
-    triangle.vert
-    triangle.frag
-    pc_triangle.vert
-    pc_triangle.frag
-    comp_noise.comp
+        triangle.vert
+        triangle.frag
+        pc_triangle.vert
+        pc_triangle.frag
+        comp_noise.comp
 )
 set(SPV_FILES)
 foreach (SH ${SHADERS})
@@ -23,10 +23,10 @@ foreach (SH ${SHADERS})
     set(SPV ${SHADER_BIN_DIR}/${SH}.spv)
     if (GLSLC)
         add_custom_command(OUTPUT ${SPV}
-            COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
-            DEPENDS ${SRC}
-            COMMENT "[glslc] ${SH} -> ${SPV}"
-            VERBATIM)
+                COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
+                DEPENDS ${SRC}
+                COMMENT "[glslc] ${SH} -> ${SPV}"
+                VERBATIM)
         list(APPEND SPV_FILES ${SPV})
     endif ()
 endforeach ()
@@ -46,8 +46,8 @@ function(add_vv_example name src)
     target_link_libraries(${name} PRIVATE vulkan_visualizer)
     if (WIN32)
         add_custom_command(TARGET ${name} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:${name}> $<TARGET_FILE_DIR:${name}>
-            COMMAND_EXPAND_LISTS)
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:${name}> $<TARGET_FILE_DIR:${name}>
+                COMMAND_EXPAND_LISTS)
     endif ()
 endfunction()
 
@@ -57,7 +57,7 @@ add_vv_example(ex01_imgui_minimal_ui ex01_imgui_minimal_ui.cpp)
 add_vv_example(ex02_shader_hot_reload ex02_shader_hot_reload.cpp)
 add_vv_example(ex03_hello_primitives ex03_hello_primitives.cpp)
 add_vv_example(ex04_uniforms_push_constants ex04_uniforms_push_constants.cpp)
-#add_vv_example(ex05_compute_to_image ex05_compute_to_image.cpp)
-#add_vv_example(ex06_presentation_modes_showcase ex06_presentation_modes_showcase.cpp)
-#add_vv_example(ex07_time_series_playback ex07_time_series_playback.cpp)
-#add_vv_example(ex08_screenshot_workflow ex08_screenshot_workflow.cpp)
+add_vv_example(ex05_compute_to_image ex05_compute_to_image.cpp)
+add_vv_example(ex06_presentation_modes_showcase ex06_presentation_modes_showcase.cpp)
+add_vv_example(ex07_direct_to_swapchain ex07_direct_to_swapchain.cpp)
+add_vv_example(ex08_screenshot_workflow ex08_screenshot_workflow.cpp)
