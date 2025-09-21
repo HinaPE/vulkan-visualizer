@@ -51,6 +51,7 @@ set(libname vulkan_visualizer)
 
 set(${libname}_SOURCES
         src/vk_engine.cpp
+        src/vv_camera.cpp
 )
 
 add_library(${libname} STATIC

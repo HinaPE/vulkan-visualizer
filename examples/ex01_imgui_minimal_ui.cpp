@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "vv_camera.h"
 
 #ifndef VK_CHECK
 #define VK_CHECK(x) do{VkResult r=(x);if(r!=VK_SUCCESS)throw std::runtime_error("Vulkan error: "+std::to_string(r));}while(false)
@@ -156,6 +157,12 @@ public:
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
+    void update(const EngineContext&, const FrameContext& f) override {
+        cam_.update(f.dt_sec, int(f.extent.width), int(f.extent.height));
+    }
+    void on_event(const SDL_Event& e, const EngineContext& eng, const FrameContext* f) override {
+        cam_.handle_event(e, &eng, f);
+    }
     void on_imgui(const EngineContext&, const FrameContext& f) override
     {
         ImGui::Begin("Controls");
@@ -165,6 +172,10 @@ public:
         ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
         ImGui::Text("Press F12 to screenshot");
         ImGui::End();
+
+        cam_.imgui_panel(nullptr);
+        cam_.imgui_draw_overlay(int(f.extent.width), int(f.extent.height));
+
         ImGui::Begin("Log");
         ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");
         ImGui::End();
@@ -176,6 +187,7 @@ private:
     VkPipeline pipe{};
     VkFormat fmt{};
     float clear_[3]{0.05f, 0.07f, 0.12f};
+    vv::CameraService cam_{};
 };
 
 int main()
