@@ -111,9 +111,9 @@ public:
     void update(const EngineContext&, const FrameContext& f) override
     {
         const float t = static_cast<float>(f.time_sec);
-        tint[0]       = 0.5f + 0.5f * std::sinf(t * 0.9f);
-        tint[1]       = 0.5f + 0.5f * std::sinf(t * 1.1f + 1.57f);
-        tint[2]       = 0.5f + 0.5f * std::sinf(t * 1.3f + 3.14f);
+        tint[0]       = 0.5f + 0.5f * std::sin(t * 0.9f);
+        tint[1]       = 0.5f + 0.5f * std::sin(t * 1.1f + 1.57f);
+        tint[2]       = 0.5f + 0.5f * std::sin(t * 1.3f + 3.14f);
     }
 
     void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override
