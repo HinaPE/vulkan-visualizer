@@ -252,6 +252,7 @@ private:
     void create_imgui();
     void destroy_imgui();
     std::unique_ptr<UiSystem> ui_;
+    VkFormat imgui_format_{VK_FORMAT_UNDEFINED};
 #ifdef VV_ENABLE_LOGGING
     std::vector<std::string> log_lines_;
 #endif

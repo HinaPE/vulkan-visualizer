@@ -737,7 +737,16 @@ void VulkanEngine::recreate_swapchain() {
     frm.swapchain_image_view = VK_NULL_HANDLE;
 
     IF_NOT_NULL_DO(renderer_, renderer_->on_swapchain_ready(make_engine_context(), frm));
-    IF_NOT_NULL_DO(ui_, ui_->set_min_image_count(static_cast<uint32_t>(swapchain_.swapchain_images.size())));
+
+    if (ui_) {
+        if (imgui_format_ != swapchain_.swapchain_image_format) {
+            ui_->shutdown(ctx_.device);
+            ui_.reset();
+            create_imgui();
+        } else {
+            ui_->set_min_image_count(static_cast<uint32_t>(swapchain_.swapchain_images.size()));
+        }
+    }
 
     state_.resize_requested = false;
 }
@@ -922,7 +931,7 @@ void VulkanEngine::end_frame(uint32_t imageIndex, VkCommandBuffer cmd) {
         VkSemaphoreSubmitInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .pNext = nullptr, .semaphore = fr.renderComplete, .value = 0u, .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, .deviceIndex = 0u},
         VkSemaphoreSubmitInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .pNext = nullptr, .semaphore = render_timeline_, .value = timeline_to_signal, .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, .deviceIndex = 0u}};
 
-    VkSubmitInfo2 si{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .pNext = nullptr, .waitSemaphoreInfoCount = waitCount, .pWaitSemaphoreInfos = waitInfos, .commandBufferInfoCount = 1u, .pCommandBufferInfos = &cbsi, .signalSemaphoreInfoCount = 2u, .pSignalSemaphoreInfos = signalInfos};
+    VkSubmitInfo2 si{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .pNext = nullptr, .waitSemaphoreInfoCount = waitCount, .pWaitSemaphoreInfos = waitInfos, .commandBufferInfoCount = 1, .pCommandBufferInfos = &cbsi, .signalSemaphoreInfoCount = 2u, .pSignalSemaphoreInfos = signalInfos};
     VK_CHECK(vkQueueSubmit2(ctx_.graphics_queue, 1, &si, VK_NULL_HANDLE));
     fr.submitted_timeline_value = timeline_to_signal;
 
@@ -959,6 +968,7 @@ void VulkanEngine::create_imgui() {
         throw std::runtime_error(std::string("ImGui initialization failed: ") + ex.what());
     }
 
+    imgui_format_ = swapchain_.swapchain_image_format;
     ImGuiStyle& style      = ImGui::GetStyle();
     style.WindowRounding   = 0.0f;
     style.WindowBorderSize = 0.0f;
@@ -1071,9 +1081,10 @@ void VulkanEngine::create_imgui() {
 #ifdef VV_ENABLE_TONEMAP
             ImGui::Checkbox("Use sRGB Swapchain (Gamma)", &tonemap_enabled_);
             ImGui::SameLine();
-            if (ImGui::Button("Apply")) { recreate_swapchain(); }
+            // Defer swapchain recreate to next frame to avoid mid-frame invalidation
+            if (ImGui::Button("Apply")) { state_.resize_requested = true; }
 #endif
-            if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); }
+            if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); printf("???"); }
         }
         ImGui::End();
     });
@@ -1085,7 +1096,7 @@ void VulkanEngine::create_imgui() {
 #endif
 }
 
-void VulkanEngine::destroy_imgui() { if (ui_) { ui_->shutdown(ctx_.device); ui_.reset(); } }
+void VulkanEngine::destroy_imgui() { if (ui_) { ui_->shutdown(ctx_.device); ui_.reset(); imgui_format_ = VK_FORMAT_UNDEFINED; } }
 
 #ifdef VV_ENABLE_GPU_TIMESTAMPS
 void VulkanEngine::create_timestamp_pool() {
