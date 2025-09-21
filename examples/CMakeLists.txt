@@ -67,3 +67,4 @@ add_vv_example(ex06_presentation_modes_showcase ex06_presentation_modes_showcase
 add_vv_example(ex07_direct_to_swapchain ex07_direct_to_swapchain.cpp)
 add_vv_example(ex08_screenshot_workflow ex08_screenshot_workflow.cpp)
 add_vv_example(ex09_3dviewport ex09_3dviewport.cpp)
+add_vv_example(ex10_xpbd_cloth ex10_xpbd_cloth.cpp)
