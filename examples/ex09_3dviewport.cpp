@@ -136,14 +136,16 @@ public:
         barrier_img(color.image, color.aspect, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext& f) override {
-        if (ImGui::Begin("3D Viewport")) {
+    void on_imgui(const EngineContext& eng, const FrameContext& f) override {
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("3D Viewport", []{
             ImGui::Text("Use RMB to rotate, MMB/Ctrl+RMB to pan, wheel to zoom.");
             ImGui::Text("WASD/QE to move in Fly mode (toggle in Camera panel).");
-            ImGui::Separator();
-        }
-        ImGui::End();
-        cam_.imgui_panel(nullptr);
+        });
+        host->add_tab("Camera", [this]{
+            cam_.imgui_panel_contents();
+        });
     }
 
 private:

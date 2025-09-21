@@ -108,12 +108,13 @@ public:
     {
     }
 
-    void on_imgui(const EngineContext&, const FrameContext& f) override
+    void on_imgui(const EngineContext& eng, const FrameContext& f) override
     {
-        ImGui::Begin("compute_to_image");
-        ImGui::Text("ex05_compute_to_image");
-        ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("compute_to_image", [this,&f]{
+            ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
+        });
     }
 
 private:

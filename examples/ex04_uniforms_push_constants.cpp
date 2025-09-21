@@ -102,11 +102,13 @@ public:
         vkDestroyShaderModule(dev, fs, nullptr);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void on_imgui(const EngineContext& eng, const FrameContext&) override
     {
-        ImGui::Begin("push_constants");
-        ImGui::ColorEdit4("tint", tint);
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("push_constants", []{
+            ImGui::TextUnformatted("Push constants / uniforms sample");
+        });
     }
 
     void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override

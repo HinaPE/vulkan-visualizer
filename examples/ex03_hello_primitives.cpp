@@ -112,13 +112,13 @@ public:
         if (layout)vkDestroyPipelineLayout(e.device, layout, nullptr);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void on_imgui(const EngineContext& eng, const FrameContext&) override
     {
-        ImGui::Begin("hello_primitives");
-        ImGui::Checkbox("tri", &show_tri);
-        ImGui::Checkbox("line", &show_line);
-        ImGui::Checkbox("point", &show_point);
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("hello_primitives", []{
+            ImGui::TextUnformatted("Primitive rendering sample");
+        });
     }
 
     void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override

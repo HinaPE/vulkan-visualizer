@@ -112,6 +112,7 @@ public:
 
     // ImGui helpers (optional, safe if ImGui not present)
     void imgui_panel(bool* p_open = nullptr);
+    void imgui_panel_contents();
 
 private:
     // Internals

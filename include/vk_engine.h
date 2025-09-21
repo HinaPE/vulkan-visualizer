@@ -13,6 +13,15 @@
 #include <string_view>
 #include <vector>
 
+// Minimal UI tabs host interface exposed via EngineContext.services (if ImGui is enabled)
+namespace vv_ui {
+struct TabsHost {
+    virtual ~TabsHost() = default;
+    virtual void add_tab(const char* name, std::function<void()> fn) = 0;     // per-frame ephemeral tabs
+    virtual void set_main_window_title(const char* title) = 0;                // optional
+};
+} // namespace vv_ui
+
 // VMA handle fwd decls
 struct VmaAllocator_T; using VmaAllocator = VmaAllocator_T*;
 struct VmaAllocation_T; using VmaAllocation = VmaAllocation_T*;
@@ -77,7 +86,7 @@ struct EngineContext {
     uint32_t compute_queue_family{};
     uint32_t transfer_queue_family{};
     uint32_t present_queue_family{};
-    void* services{}; // reserved
+    void* services{}; // if ImGui enabled: points to vv_ui::TabsHost, otherwise nullptr
 };
 
 struct FrameContext {
@@ -248,7 +257,7 @@ private:
     std::unique_ptr<IRenderer> renderer_;
     RendererCaps renderer_caps_{};
 
-    struct UiSystem;
+    struct UiSystem; // implemented privately; exposed via vv_ui::TabsHost through EngineContext.services
     void create_imgui();
     void destroy_imgui();
     std::unique_ptr<UiSystem> ui_;

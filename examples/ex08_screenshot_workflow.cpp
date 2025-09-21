@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cmath>
 #ifndef VK_CHECK
 #define VK_CHECK(x) do{VkResult r=(x);if(r!=VK_SUCCESS)throw std::runtime_error("vk: "+std::to_string(r));}while(false)
 #endif
@@ -167,14 +168,14 @@ public:
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext& f) override
+    void on_imgui(const EngineContext& eng, const FrameContext& f) override
     {
-        ImGui::Begin("screenshot_workflow");
-        ImGui::TextUnformatted("ex08_screenshot_workflow");
-        ImGui::BulletText("Press PrintScreen or use Controls->Screenshot");
-        ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
-        ImGui::Text("Time %.2f s", f.time_sec);
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("screenshot_workflow", [this,&f]{
+            ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
+            ImGui::TextUnformatted("Press F12 or use Controls tab to take screenshot");
+        });
     }
 
 private:

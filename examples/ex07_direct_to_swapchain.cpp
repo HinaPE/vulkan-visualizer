@@ -150,13 +150,13 @@ public:
         vkCmdPipelineBarrier2(cmd, &dep2);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void on_imgui(const EngineContext& eng, const FrameContext&) override
     {
-        ImGui::Begin("direct_to_swapchain");
-        ImGui::TextUnformatted("ex07_direct_to_swapchain");
-        ImGui::BulletText("Mode: DirectToSwapchain");
-        ImGui::TextUnformatted("Renderer leaves swapchain in TRANSFER_DST layout for ImGui.");
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("direct_to_swapchain", []{
+            ImGui::TextUnformatted("Direct to swapchain sample");
+        });
     }
 
 private:

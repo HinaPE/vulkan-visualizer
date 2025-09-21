@@ -156,18 +156,20 @@ public:
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext& f) override
+    void on_imgui(const EngineContext& eng, const FrameContext& f) override
     {
-        ImGui::Begin("Controls");
-        ImGui::Text("ex01_imgui_minimal_ui");
-        ImGui::SliderFloat3("clear", clear_, 0.0f, 1.0f);
-        ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
-        ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
-        ImGui::Text("Press F12 to screenshot");
-        ImGui::End();
-        ImGui::Begin("Log");
-        ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("Example Controls", [this,&f]{
+            ImGui::Text("ex01_imgui_minimal_ui");
+            ImGui::SliderFloat3("clear", clear_, 0.0f, 1.0f);
+            ImGui::Text("Extent %u x %u", f.extent.width, f.extent.height);
+            ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
+            ImGui::Text("Press F12 to screenshot");
+        });
+        host->add_tab("Example Log", []{
+            ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");
+        });
     }
 
 private:

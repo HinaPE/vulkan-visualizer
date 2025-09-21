@@ -154,13 +154,13 @@ public:
         vkCmdPipelineBarrier2(cmd, &dep2);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void on_imgui(const EngineContext& eng, const FrameContext&) override
     {
-        ImGui::Begin("presentation_modes");
-        ImGui::TextUnformatted("ex06_presentation_modes_showcase");
-        ImGui::BulletText("Mode: RendererComposite (custom compose)");
-        ImGui::TextUnformatted("Engine overlays ImGui after this pass.");
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("presentation_modes", []{
+            ImGui::TextUnformatted("Presentation modes showcase");
+        });
     }
 
 private:

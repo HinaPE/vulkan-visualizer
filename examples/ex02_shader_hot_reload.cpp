@@ -108,14 +108,15 @@ public:
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
-    void on_imgui(const EngineContext&, const FrameContext&) override
+    void on_imgui(const EngineContext& eng, const FrameContext&) override
     {
-        ImGui::Begin("Hot Reload");
-        ImGui::TextUnformatted("Edit shaders in examples/shaders and rebuild; app reloads SPIR-V without restart.");
-        ImGui::TextUnformatted("Watching:");
-        ImGui::BulletText("%s", SHADER_SOURCE_DIR);
-        ImGui::BulletText("%s", SHADER_OUTPUT_DIR);
-        ImGui::End();
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_tab("Hot Reload", [this]{
+            ImGui::TextUnformatted("Shader hot-reload controls");
+            ImGui::Separator();
+            ImGui::TextUnformatted("Modify shaders in examples/shaders and observe reload.");
+        });
     }
 
 private:

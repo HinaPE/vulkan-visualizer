@@ -380,16 +380,20 @@ bool CameraService::load_from_file(const std::string& path) {
 
 void CameraService::imgui_panel(bool* p_open) {
     if (!ImGui::Begin("Camera", p_open)) { ImGui::End(); return; }
+    imgui_panel_contents();
+    ImGui::End();
+}
 
-    const bool isOrbit = (state_.mode == CameraMode::Orbit);
-    if (ImGui::RadioButton("Orbit", isOrbit)) { set_mode(CameraMode::Orbit); }
+void CameraService::imgui_panel_contents() {
+    int mode = (state_.mode == CameraMode::Orbit) ? 0 : 1;
+    if (ImGui::RadioButton("Orbit", mode==0)) { mode=0; set_mode(CameraMode::Orbit); }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Fly", !isOrbit))   { set_mode(CameraMode::Fly); }
+    if (ImGui::RadioButton("Fly", mode==1))   { mode=1; set_mode(CameraMode::Fly); }
 
-    const bool isPersp = (state_.projection == CameraProjection::Perspective);
-    if (ImGui::RadioButton("Perspective", isPersp)) { set_projection(CameraProjection::Perspective); }
+    int proj = (state_.projection == CameraProjection::Perspective) ? 0 : 1;
+    if (ImGui::RadioButton("Perspective", proj==0)) { proj=0; set_projection(CameraProjection::Perspective); }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Orthographic", !isPersp)) { set_projection(CameraProjection::Orthographic); }
+    if (ImGui::RadioButton("Orthographic", proj==1)) { proj=1; set_projection(CameraProjection::Orthographic); }
 
     ImGui::SeparatorText("Params");
     ImGui::DragFloat("FOV Y (deg)", &state_.fov_y_deg, 0.1f, 10.0f, 120.0f);
@@ -426,8 +430,6 @@ void CameraService::imgui_panel(bool* p_open) {
     ImGui::InputText("File", pathbuf, sizeof(pathbuf));
     if (ImGui::Button("Save")) { (void)save_to_file(pathbuf); }
     ImGui::SameLine(); if (ImGui::Button("Load")) { (void)load_from_file(pathbuf); }
-
-    ImGui::End();
 
     recompute_cached_();
 }

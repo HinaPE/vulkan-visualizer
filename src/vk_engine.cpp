@@ -59,7 +59,7 @@
 #define REQUIRE_TRUE(expr, msg) do { if (!(expr)) { throw std::runtime_error(std::string("Check failed: ") + #expr + " | " + (msg)); } } while (false)
 #endif
 
-struct VulkanEngine::UiSystem {
+struct VulkanEngine::UiSystem : vv_ui::TabsHost {
     using PanelFn = std::function<void()>;
 
     bool init(SDL_Window* window, VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue graphicsQueue, uint32_t graphicsQueueFamily, VkFormat swapchainFormat, uint32_t swapchainImageCount) {
@@ -169,11 +169,54 @@ struct VulkanEngine::UiSystem {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        for (auto& panel : panels_) panel();
+        // Do not build UI here; renderers will register tabs; we will draw them in render_overlay before ImGui::Render().
     }
 
-    void render_overlay(VkCommandBuffer cmd, VkImage swapchainImage, VkImageView swapchainView, VkExtent2D extent, VkImageLayout previousLayout) const {
+    // vv_ui::TabsHost
+    void add_tab(const char* name, std::function<void()> fn) override {
+        if (!name || !*name || !fn) return;
+        frame_tabs_.emplace_back(std::string(name), std::move(fn));
+    }
+    void set_main_window_title(const char* title) override {
+        if (title) main_title_ = title;
+    }
+
+    // Allow engine to update backend min image count on swapchain changes
+    void set_min_image_count(uint32_t count) {
         if (!initialized_) return;
+        ImGui_ImplVulkan_SetMinImageCount(count);
+    }
+
+    // Engine-owned persistent tabs
+    void add_persistent_tab(const char* name, PanelFn fn) {
+        if (!name || !*name || !fn) return;
+        persistent_tabs_.emplace_back(std::string(name), std::move(fn));
+    }
+
+    void draw_tabs_ui() {
+        if (!initialized_) return;
+        const ImGuiWindowFlags win_flags = ImGuiWindowFlags_NoDocking;
+        if (ImGui::Begin(main_title_.c_str(), nullptr, win_flags)) {
+            if (ImGui::BeginTabBar("MainTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_TabListPopupButton | ImGuiTabBarFlags_FittingPolicyScroll)) {
+                // Persistent tabs first
+                for (auto& [name, fn] : persistent_tabs_) {
+                    if (ImGui::BeginTabItem(name.c_str())) { fn(); ImGui::EndTabItem(); }
+                }
+                // Per-frame tabs from renderer(s)
+                for (auto& [name, fn] : frame_tabs_) {
+                    if (ImGui::BeginTabItem(name.c_str())) { fn(); ImGui::EndTabItem(); }
+                }
+                ImGui::EndTabBar();
+            }
+        }
+        ImGui::End();
+    }
+
+    void render_overlay(VkCommandBuffer cmd, VkImage swapchainImage, VkImageView swapchainView, VkExtent2D extent, VkImageLayout previousLayout) {
+        if (!initialized_) return;
+
+        // Build tabs UI right before Render()
+        draw_tabs_ui();
 
         VkImageMemoryBarrier2 to_color{
             .sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -261,16 +304,21 @@ struct VulkanEngine::UiSystem {
             .pImageMemoryBarriers     = &to_present,
         };
         vkCmdPipelineBarrier2(cmd, &dep_present);
+
+        // Clear per-frame tabs after rendering
+        frame_tabs_.clear();
     }
 
-    void add_panel(PanelFn fn) { panels_.push_back(std::move(fn)); }
-    void set_min_image_count(uint32_t count) const { if (!initialized_) return; ImGui_ImplVulkan_SetMinImageCount(count); }
+    // Legacy methods (unused externally now); kept for internal calls if needed
+    void add_panel(PanelFn fn) { add_persistent_tab("Panel", std::move(fn)); }
 
 private:
     VkDescriptorPool pool_{VK_NULL_HANDLE};
     bool initialized_{false};
     VkFormat color_format_{};
-    std::vector<PanelFn> panels_;
+    std::string main_title_{"Vulkan Visualizer"};
+    std::vector<std::pair<std::string, PanelFn>> persistent_tabs_{};
+    std::vector<std::pair<std::string, PanelFn>> frame_tabs_{};
 };
 
 void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios) {
@@ -596,7 +644,7 @@ EngineContext VulkanEngine::make_engine_context() const {
     eng.compute_queue_family  = ctx_.compute_queue_family;
     eng.transfer_queue_family = ctx_.transfer_queue_family;
     eng.present_queue_family  = ctx_.present_queue_family;
-    eng.services              = nullptr;
+    eng.services              = ui_ ? static_cast<vv_ui::TabsHost*>(ui_.get()) : nullptr;
     return eng;
 }
 
@@ -972,6 +1020,8 @@ void VulkanEngine::create_imgui() {
     }
 
     imgui_format_ = swapchain_.swapchain_image_format;
+    ui_->set_main_window_title(state_.name.c_str());
+
     ImGuiStyle& style      = ImGui::GetStyle();
     style.WindowRounding   = 0.0f;
     style.WindowBorderSize = 0.0f;
@@ -981,102 +1031,84 @@ void VulkanEngine::create_imgui() {
     VkPhysicalDeviceProperties props{}; vkGetPhysicalDeviceProperties(ctx_.physical, &props);
     VkPhysicalDeviceMemoryProperties memProps{}; vkGetPhysicalDeviceMemoryProperties(ctx_.physical, &memProps);
 
-    ui_->add_panel([this, props, memProps] {
-        if (ImGui::Begin("Stats")) {
-             const ImGuiIO& io = ImGui::GetIO();
-             const float fps   = io.Framerate;
-             const float ms    = fps > 0.f ? 1000.f / fps : 0.f;
-
-             ImGui::Text("FPS: %.1f (%.2f ms)", fps, ms);
-             ImGui::SeparatorText("Frame");
-             ImGui::Text("Frame#:  %llu", static_cast<unsigned long long>(state_.frame_number));
-             ImGui::Text("Time:    %.3f s", state_.time_sec);
-             ImGui::Text("dt:      %.3f ms", state_.dt_sec * 1000.0);
+    // Engine persistent tabs: Stats
+    ui_->add_persistent_tab("Stats", [this, props, memProps] {
+        const ImGuiIO& io = ImGui::GetIO();
+        const float fps   = io.Framerate; const float ms = fps > 0.f ? 1000.f / fps : 0.f;
+        ImGui::Text("FPS: %.1f (%.2f ms)", fps, ms);
+        ImGui::SeparatorText("Frame");
+        ImGui::Text("Frame#:  %llu", static_cast<unsigned long long>(state_.frame_number));
+        ImGui::Text("Time:    %.3f s", state_.time_sec);
+        ImGui::Text("dt:      %.3f ms", state_.dt_sec * 1000.0);
 #ifdef VV_ENABLE_GPU_TIMESTAMPS
-             ImGui::Text("GPU:     %.3f ms (engine)", last_gpu_ms_);
+        ImGui::Text("GPU:     %.3f ms (engine)", last_gpu_ms_);
 #endif
-
-             ImGui::SeparatorText("Swapchain");
-             ImGui::Text("Extent:  %u x %u", swapchain_.swapchain_extent.width, swapchain_.swapchain_extent.height);
-             ImGui::Text("Images:  %zu", swapchain_.swapchain_images.size());
-             ImGui::Text("Format:  0x%08X", static_cast<uint32_t>(swapchain_.swapchain_image_format));
-
-             ImGui::SeparatorText("Attachments");
-             if (swapchain_.color_attachments.empty()) {
-                 ImGui::TextUnformatted("Color: (none)");
-             } else {
-                 for (const auto& att : swapchain_.color_attachments) ImGui::Text("%s: 0x%08X", att.name.c_str(), static_cast<uint32_t>(att.image.imageFormat));
-             }
-             if (swapchain_.depth_attachment) ImGui::Text("Depth %s: 0x%08X", swapchain_.depth_attachment->name.c_str(), static_cast<uint32_t>(swapchain_.depth_attachment->image.imageFormat));
-
-             ImGui::SeparatorText("Window");
-             int lw = 0, lh = 0, pw = 0, ph = 0; SDL_GetWindowSize(ctx_.window, &lw, &lh); SDL_GetWindowSizeInPixels(ctx_.window, &pw, &ph);
-             ImGui::Text("Logical: %d x %d", lw, lh);
-             ImGui::Text("Pixels : %d x %d", pw, ph);
-             ImGui::Text("Focused: %s", state_.focused ? "Yes" : "No");
-             ImGui::Text("Minimized: %s", state_.minimized ? "Yes" : "No");
-             ImGui::Text("Scale:   %.2f,%.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-
-             ImGui::SeparatorText("Device");
-             ImGui::TextUnformatted(props.deviceName);
-             ImGui::Text("VendorID: 0x%04X  DeviceID: 0x%04X", props.vendorID, props.deviceID);
-             ImGui::Text("API:  %u.%u.%u", VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
-             ImGui::Text("Drv:  0x%08X", props.driverVersion);
-
-             ImGui::SeparatorText("Queues");
-             ImGui::Text("GFX qfam: %u", ctx_.graphics_queue_family);
-             ImGui::Text("CMP qfam: %u", ctx_.compute_queue_family);
-             ImGui::Text("XFR qfam: %u", ctx_.transfer_queue_family);
-             ImGui::Text("PRS qfam: %u", ctx_.present_queue_family);
-
-             ImGui::SeparatorText("Renderer");
-             if (renderer_) {
-                 const RendererStats st = renderer_->get_stats();
-                 ImGui::Text("Draws:   %llu", static_cast<unsigned long long>(st.draw_calls));
-                 ImGui::Text("Disp:    %llu", static_cast<unsigned long long>(st.dispatches));
-                 ImGui::Text("Tris:    %llu", static_cast<unsigned long long>(st.triangles));
-                 ImGui::Text("CPU:     %.3f ms", st.cpu_ms);
-                 ImGui::Text("GPU:     %.3f ms", st.gpu_ms);
-
-                 ImGui::SeparatorText("Caps");
-                 ImGui::Text("FramesInFlight: %u", renderer_caps_.frames_in_flight);
-                 ImGui::Text("DynamicRendering: %s", renderer_caps_.dynamic_rendering ? "Yes" : "No");
-                 ImGui::Text("TimelineSemaphore: %s", renderer_caps_.timeline_semaphore ? "Yes" : "No");
-                 ImGui::Text("DescriptorIndexing: %s", renderer_caps_.descriptor_indexing ? "Yes" : "No");
-                 ImGui::Text("BufferDeviceAddress: %s", renderer_caps_.buffer_device_address ? "Yes" : "No");
-                 ImGui::Text("UsesDepth: %s", renderer_caps_.uses_depth ? "Yes" : "No");
-                 ImGui::Text("UsesOffscreen: %s", renderer_caps_.uses_offscreen ? "Yes" : "No");
-             } else ImGui::TextUnformatted("(no renderer)");
-
-             ImGui::SeparatorText("Sync");
-             ImGui::Text("Timeline value: %llu", static_cast<unsigned long long>(timeline_value_));
-
-             ImGui::SeparatorText("Memory (VMA)");
-             std::vector<VmaBudget> budgets(memProps.memoryHeapCount); vmaGetHeapBudgets(ctx_.allocator, budgets.data());
-             uint64_t totalBudget = 0, totalUsage = 0; for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) { totalBudget += budgets[i].budget; totalUsage += budgets[i].usage; }
-             auto fmtMB = [](uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
-             ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
-         }
-         ImGui::End();
-     });
+        ImGui::SeparatorText("Swapchain");
+        ImGui::Text("Extent:  %u x %u", swapchain_.swapchain_extent.width, swapchain_.swapchain_extent.height);
+        ImGui::Text("Images:  %zu", swapchain_.swapchain_images.size());
+        ImGui::Text("Format:  0x%08X", static_cast<uint32_t>(swapchain_.swapchain_image_format));
+        ImGui::SeparatorText("Attachments");
+        if (swapchain_.color_attachments.empty()) { ImGui::TextUnformatted("Color: (none)"); }
+        else { for (const auto& att : swapchain_.color_attachments) ImGui::Text("%s: 0x%08X", att.name.c_str(), static_cast<uint32_t>(att.image.imageFormat)); }
+        if (swapchain_.depth_attachment) ImGui::Text("Depth %s: 0x%08X", swapchain_.depth_attachment->name.c_str(), static_cast<uint32_t>(swapchain_.depth_attachment->image.imageFormat));
+        ImGui::SeparatorText("Window");
+        int lw=0, lh=0, pw=0, ph=0; SDL_GetWindowSize(ctx_.window, &lw, &lh); SDL_GetWindowSizeInPixels(ctx_.window, &pw, &ph);
+        ImGui::Text("Logical: %d x %d", lw, lh);
+        ImGui::Text("Pixels : %d x %d", pw, ph);
+        ImGui::Text("Focused: %s", state_.focused ? "Yes" : "No");
+        ImGui::Text("Minimized: %s", state_.minimized ? "Yes" : "No");
+        ImGui::Text("Scale:   %.2f,%.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+        ImGui::SeparatorText("Device");
+        ImGui::TextUnformatted(props.deviceName);
+        ImGui::Text("VendorID: 0x%04X  DeviceID: 0x%04X", props.vendorID, props.deviceID);
+        ImGui::Text("API:  %u.%u.%u", VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
+        ImGui::Text("Drv:  0x%08X", props.driverVersion);
+        ImGui::SeparatorText("Queues");
+        ImGui::Text("GFX qfam: %u", ctx_.graphics_queue_family);
+        ImGui::Text("CMP qfam: %u", ctx_.compute_queue_family);
+        ImGui::Text("XFR qfam: %u", ctx_.transfer_queue_family);
+        ImGui::Text("PRS qfam: %u", ctx_.present_queue_family);
+        ImGui::SeparatorText("Renderer");
+        if (renderer_) {
+            const RendererStats st = renderer_->get_stats();
+            ImGui::Text("Draws:   %llu", static_cast<unsigned long long>(st.draw_calls));
+            ImGui::Text("Disp:    %llu", static_cast<unsigned long long>(st.dispatches));
+            ImGui::Text("Tris:    %llu", static_cast<unsigned long long>(st.triangles));
+            ImGui::Text("CPU:     %.3f ms", st.cpu_ms);
+            ImGui::Text("GPU:     %.3f ms", st.gpu_ms);
+            ImGui::SeparatorText("Caps");
+            ImGui::Text("FramesInFlight: %u", renderer_caps_.frames_in_flight);
+            ImGui::Text("DynamicRendering: %s", renderer_caps_.dynamic_rendering ? "Yes" : "No");
+            ImGui::Text("TimelineSemaphore: %s", renderer_caps_.timeline_semaphore ? "Yes" : "No");
+            ImGui::Text("DescriptorIndexing: %s", renderer_caps_.descriptor_indexing ? "Yes" : "No");
+            ImGui::Text("BufferDeviceAddress: %s", renderer_caps_.buffer_device_address ? "Yes" : "No");
+            ImGui::Text("UsesDepth: %s", renderer_caps_.uses_depth ? "Yes" : "No");
+            ImGui::Text("UsesOffscreen: %s", renderer_caps_.uses_offscreen ? "Yes" : "No");
+        } else ImGui::TextUnformatted("(no renderer)");
+        ImGui::SeparatorText("Sync");
+        ImGui::Text("Timeline value: %llu", static_cast<unsigned long long>(timeline_value_));
+        ImGui::SeparatorText("Memory (VMA)");
+        std::vector<VmaBudget> budgets(memProps.memoryHeapCount); vmaGetHeapBudgets(ctx_.allocator, budgets.data());
+        uint64_t totalBudget=0, totalUsage=0; for (uint32_t i=0;i<memProps.memoryHeapCount;++i){ totalBudget+=budgets[i].budget; totalUsage+=budgets[i].usage; }
+        auto fmtMB = [](uint64_t bytes){ return static_cast<double>(bytes)/(1024.0*1024.0); };
+        ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
+    });
 
 #ifdef VV_ENABLE_SCREENSHOT
-    ui_->add_panel([this] {
-        if (ImGui::Begin("Controls")) {
- #ifdef VV_ENABLE_TONEMAP
-             ImGui::Checkbox("Use sRGB Swapchain (Gamma)", &tonemap_enabled_);
-             ImGui::SameLine();
-             // Defer swapchain recreate to next frame to avoid mid-frame invalidation
-             if (ImGui::Button("Apply")) { state_.resize_requested = true; }
- #endif
-             if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); }
-         }
-         ImGui::End();
-     });
+    // Controls tab (screenshot & tonemap toggle)
+    ui_->add_persistent_tab("Controls", [this] {
+#ifdef VV_ENABLE_TONEMAP
+        ImGui::Checkbox("Use sRGB Swapchain (Gamma)", &tonemap_enabled_);
+        ImGui::SameLine(); if (ImGui::Button("Apply")) { state_.resize_requested = true; }
+#endif
+        if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); }
+    });
 #endif
 
 #ifdef VV_ENABLE_LOGGING
-    ui_->add_panel([this] { if (ImGui::Begin("Log")) { for (const auto& line : log_lines_) ImGui::TextUnformatted(line.c_str()); } ImGui::End(); });
+    ui_->add_persistent_tab("Log", [this] {
+        for (const auto& line : log_lines_) ImGui::TextUnformatted(line.c_str());
+    });
     log_line("Engine initialized");
 #endif
 }
