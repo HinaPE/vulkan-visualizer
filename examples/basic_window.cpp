@@ -51,7 +51,58 @@ public:
     void initialize(const EngineContext& eng, const RendererCaps& caps, const FrameContext&) override {
         device_       = eng.device;
         color_format_ = caps.color_attachments.empty() ? VK_FORMAT_B8G8R8A8_UNORM : caps.color_attachments.front().format;
+        create_graphics_pipeline();
+    }
 
+    void destroy(const EngineContext& eng, const RendererCaps&) override {
+        if (pipeline_) vkDestroyPipeline(eng.device, pipeline_, nullptr);
+        if (layout_)   vkDestroyPipelineLayout(eng.device, layout_, nullptr);
+        pipeline_ = VK_NULL_HANDLE; layout_ = VK_NULL_HANDLE; device_ = VK_NULL_HANDLE;
+    }
+
+    void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& frm) override {
+        if (!pipeline_ || frm.color_attachments.empty()) return;
+        const AttachmentView& target = frm.color_attachments.front();
+
+        auto barrier = [&](VkImageLayout oldL, VkImageLayout newL, VkPipelineStageFlags2 srcStage, VkPipelineStageFlags2 dstStage, VkAccessFlags2 srcAccess, VkAccessFlags2 dstAccess){
+            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            b.srcStageMask = srcStage; b.dstStageMask = dstStage; b.srcAccessMask = srcAccess; b.dstAccessMask = dstAccess; b.oldLayout = oldL; b.newLayout = newL; b.image = target.image; b.subresourceRange = {target.aspect,0u,1u,0u,1u};
+            VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; di.imageMemoryBarrierCount=1; di.pImageMemoryBarriers=&b; vkCmdPipelineBarrier2(cmd,&di);
+        };
+
+        barrier(VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        VkClearValue clear{.color={{0.05f,0.07f,0.12f,1.0f}}};
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = target.view; color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; color.storeOp = VK_ATTACHMENT_STORE_OP_STORE; color.clearValue = clear;
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO}; ri.renderArea = {{0,0}, frm.extent}; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &color;
+
+        vkCmdBeginRendering(cmd, &ri);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+        VkViewport vp{}; vp.width = float(frm.extent.width); vp.height = float(frm.extent.height); vp.minDepth = 0.f; vp.maxDepth = 1.f;
+        VkRect2D sc{{0,0}, frm.extent};
+        vkCmdSetViewport(cmd,0,1,&vp); vkCmdSetScissor(cmd,0,1,&sc); vkCmdDraw(cmd,3,1,0,0); vkCmdEndRendering(cmd);
+
+        barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    }
+
+    void reload_assets(const EngineContext& eng) override {
+        // Rebuild graphics pipeline from updated SPIR-V
+        if (!eng.device) return;
+        if (pipeline_) vkDestroyPipeline(eng.device, pipeline_, nullptr);
+        if (layout_)   vkDestroyPipelineLayout(eng.device, layout_, nullptr);
+        pipeline_ = VK_NULL_HANDLE; layout_ = VK_NULL_HANDLE;
+        device_ = eng.device; // ensure valid
+        try { create_graphics_pipeline(); }
+        catch(...) { /* keep silent; HUD/logs will indicate issues */ }
+    }
+
+private:
+    void create_graphics_pipeline() {
         const std::string dir = std::string(SHADER_OUTPUT_DIR);
         VkShaderModule vert = make_shader(device_, load_binary(dir + "/triangle.vert.spv"));
         VkShaderModule frag = make_shader(device_, load_binary(dir + "/triangle.frag.spv"));
@@ -103,42 +154,6 @@ public:
         vkDestroyShaderModule(device_, frag, nullptr);
     }
 
-    void destroy(const EngineContext& eng, const RendererCaps&) override {
-        if (pipeline_) vkDestroyPipeline(eng.device, pipeline_, nullptr);
-        if (layout_)   vkDestroyPipelineLayout(eng.device, layout_, nullptr);
-        pipeline_ = VK_NULL_HANDLE; layout_ = VK_NULL_HANDLE; device_ = VK_NULL_HANDLE;
-    }
-
-    void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& frm) override {
-        if (!pipeline_ || frm.color_attachments.empty()) return;
-        const AttachmentView& target = frm.color_attachments.front();
-
-        auto barrier = [&](VkImageLayout oldL, VkImageLayout newL, VkPipelineStageFlags2 srcStage, VkPipelineStageFlags2 dstStage, VkAccessFlags2 srcAccess, VkAccessFlags2 dstAccess){
-            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-            b.srcStageMask = srcStage; b.dstStageMask = dstStage; b.srcAccessMask = srcAccess; b.dstAccessMask = dstAccess; b.oldLayout = oldL; b.newLayout = newL; b.image = target.image; b.subresourceRange = {target.aspect,0u,1u,0u,1u};
-            VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO}; di.imageMemoryBarrierCount=1; di.pImageMemoryBarriers=&b; vkCmdPipelineBarrier2(cmd,&di);
-        };
-
-        barrier(VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-
-        VkClearValue clear{.color={{0.05f,0.07f,0.12f,1.0f}}};
-        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-        color.imageView = target.view; color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; color.storeOp = VK_ATTACHMENT_STORE_OP_STORE; color.clearValue = clear;
-        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO}; ri.renderArea = {{0,0}, frm.extent}; ri.layerCount = 1; ri.colorAttachmentCount = 1; ri.pColorAttachments = &color;
-
-        vkCmdBeginRendering(cmd, &ri);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-        VkViewport vp{}; vp.width = float(frm.extent.width); vp.height = float(frm.extent.height); vp.minDepth = 0.f; vp.maxDepth = 1.f;
-        VkRect2D sc{{0,0}, frm.extent};
-        vkCmdSetViewport(cmd,0,1,&vp); vkCmdSetScissor(cmd,0,1,&sc); vkCmdDraw(cmd,3,1,0,0); vkCmdEndRendering(cmd);
-
-        barrier(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
-    }
-
 private:
     VkDevice device_{VK_NULL_HANDLE};
     VkPipelineLayout layout_{VK_NULL_HANDLE};
@@ -153,6 +168,11 @@ int main() {
         VulkanEngine engine;
         engine.configure_window(1280, 720, "VulkanVisualizer Triangle");
         engine.set_renderer(std::make_unique<TriangleRenderer>());
+#ifdef VV_ENABLE_HOTRELOAD
+        // Watch both source and output shader directories for changes
+        engine.add_hot_reload_watch_path(std::string(SHADER_SOURCE_DIR));
+        engine.add_hot_reload_watch_path(std::string(SHADER_OUTPUT_DIR));
+#endif
         engine.init();
         engine.run();
         engine.cleanup();

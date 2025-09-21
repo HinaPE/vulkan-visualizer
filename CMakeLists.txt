@@ -13,6 +13,11 @@ project(
 # Options
 # =========================================================
 option(VULKAN_VISUALIZER_BUILD_EXAMPLE "Build the Vulkan visualizer example executable" OFF)
+option(VV_WITH_LOGGING "Enable engine logging system and ImGui log panel" ON)
+option(VV_WITH_GPU_TIMESTAMPS "Enable GPU timestamp queries for frame timing" ON)
+option(VV_WITH_TONEMAP "Enable engine tonemapping pass (fullscreen)" ON)
+option(VV_WITH_SCREENSHOT "Enable screenshot utilities (PNG)" ON)
+option(VV_WITH_HOTRELOAD "Enable simple file watcher and shader hot-reload hook" ON)
 
 # =========================================================
 # C++ standard & general compilation behavior
@@ -32,6 +37,7 @@ include(cmake/setup_imgui.cmake)
 include(cmake/setup_sdl3.cmake)
 include(cmake/setup_vkbootstrap.cmake)
 include(cmake/setup_vma.cmake)
+include(cmake/setup_stb.cmake)
 
 # =========================================================
 # Required external packages
@@ -49,6 +55,15 @@ set(${libname}_SOURCES
 
 add_library(${libname} STATIC
         ${${libname}_SOURCES}
+)
+
+# Apply compile definitions for feature toggles
+target_compile_definitions(${libname} PUBLIC
+        $<$<BOOL:${VV_WITH_LOGGING}>:VV_ENABLE_LOGGING>
+        $<$<BOOL:${VV_WITH_GPU_TIMESTAMPS}>:VV_ENABLE_GPU_TIMESTAMPS>
+        $<$<BOOL:${VV_WITH_TONEMAP}>:VV_ENABLE_TONEMAP>
+        $<$<BOOL:${VV_WITH_SCREENSHOT}>:VV_ENABLE_SCREENSHOT>
+        $<$<BOOL:${VV_WITH_HOTRELOAD}>:VV_ENABLE_HOTRELOAD>
 )
 
 # =========================================================
@@ -70,6 +85,8 @@ use_imgui(${libname})
 use_sdl3(${libname})
 use_vkbootstrap(${libname})
 use_vma(${libname})
+use_stb(${libname})
+stb_add_implementation(${libname} COMPONENTS image_write)
 
 # Enable ImGui backends (provided by setup_imgui.cmake)
 imgui_enable_backends(${libname} BACKENDS sdl3 vulkan)

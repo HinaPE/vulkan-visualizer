@@ -1,6 +1,7 @@
 # ============================================================================
-# setup_vkbootstrap.cmake
-# Helper module to download and expose vk-bootstrap without FetchContent.
+# setup_vkbootstrap.cmake (modern)
+# Fetch vk-bootstrap via FetchContent and expose vk-bootstrap::vk-bootstrap.
+# Exposes: use_vkbootstrap(<target>)
 # ============================================================================
 
 if(DEFINED _SETUP_VKBOOTSTRAP_INCLUDED)
@@ -8,82 +9,50 @@ if(DEFINED _SETUP_VKBOOTSTRAP_INCLUDED)
 endif()
 set(_SETUP_VKBOOTSTRAP_INCLUDED TRUE)
 
-set(VK_BOOTSTRAP_VERSION "1.4.321" CACHE STRING "vk-bootstrap release to download")
-set(VK_BOOTSTRAP_BASE_URL "https://github.com/charles-lunarg/vk-bootstrap/archive/refs/tags" CACHE STRING "Base URL for vk-bootstrap archives")
+include(FetchContent)
 
-set(_vkbootstrap_archive "v${VK_BOOTSTRAP_VERSION}.tar.gz")
-set(_vkbootstrap_deps_dir "${CMAKE_BINARY_DIR}/_deps")
-set(_vkbootstrap_archive_path "${_vkbootstrap_deps_dir}/${_vkbootstrap_archive}")
-set(_vkbootstrap_source_dir "${_vkbootstrap_deps_dir}/vk-bootstrap-${VK_BOOTSTRAP_VERSION}")
+set(VK_BOOTSTRAP_GIT_TAG "v1.4.321" CACHE STRING "vk-bootstrap git tag/commit")
 
-if(NOT EXISTS "${_vkbootstrap_source_dir}/src/VkBootstrap.cpp")
-    file(MAKE_DIRECTORY "${_vkbootstrap_deps_dir}")
+# Silence warnings as errors in vk-bootstrap if any
+set(VK_BOOTSTRAP_WERROR OFF CACHE BOOL "" FORCE)
+set(VK_BOOTSTRAP_INSTALL OFF CACHE BOOL "" FORCE)
 
-    set(_vkbootstrap_url "${VK_BOOTSTRAP_BASE_URL}/v${VK_BOOTSTRAP_VERSION}.tar.gz")
-    message(STATUS "Downloading vk-bootstrap ${VK_BOOTSTRAP_VERSION} from ${_vkbootstrap_url}")
+FetchContent_Declare(
+    vk_bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
+    GIT_TAG        ${VK_BOOTSTRAP_GIT_TAG}
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(vk_bootstrap)
 
-    file(DOWNLOAD
-        "${_vkbootstrap_url}"
-        "${_vkbootstrap_archive_path}"
-        SHOW_PROGRESS
-        STATUS _vkbootstrap_download_status
-        TLS_VERIFY ON
-    )
-
-    list(GET _vkbootstrap_download_status 0 _vkbootstrap_status_code)
-    if(NOT _vkbootstrap_status_code EQUAL 0)
-        list(GET _vkbootstrap_download_status 1 _vkbootstrap_status_msg)
-        message(FATAL_ERROR "Failed to download vk-bootstrap: ${_vkbootstrap_status_msg}")
-    endif()
-
-    execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_vkbootstrap_archive_path}"
-        WORKING_DIRECTORY "${_vkbootstrap_deps_dir}"
-        RESULT_VARIABLE _vkbootstrap_tar_result
-    )
-
-    if(NOT _vkbootstrap_tar_result EQUAL 0)
-        message(FATAL_ERROR "Failed to extract vk-bootstrap archive (exit code ${_vkbootstrap_tar_result})")
+# Fallback: if upstream target name changes, try to create one
+if(NOT TARGET vk-bootstrap::vk-bootstrap)
+    if(TARGET vk-bootstrap)
+        add_library(vk-bootstrap::vk-bootstrap ALIAS vk-bootstrap)
+    elseif(EXISTS "${vk_bootstrap_SOURCE_DIR}/src/VkBootstrap.cpp")
+        add_library(vk-bootstrap STATIC "${vk_bootstrap_SOURCE_DIR}/src/VkBootstrap.cpp")
+        add_library(vk-bootstrap::vk-bootstrap ALIAS vk-bootstrap)
+        target_include_directories(vk-bootstrap PUBLIC
+            "${vk_bootstrap_SOURCE_DIR}/src"
+            "${vk_bootstrap_SOURCE_DIR}/include"
+        )
+        if(NOT TARGET Vulkan::Vulkan)
+            find_package(Vulkan REQUIRED)
+        endif()
+        target_link_libraries(vk-bootstrap PUBLIC Vulkan::Vulkan)
+        target_compile_features(vk-bootstrap PUBLIC cxx_std_17)
+        set_target_properties(vk-bootstrap PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    else()
+        message(FATAL_ERROR "vk-bootstrap targets not found and source missing.")
     endif()
 endif()
-
-set(VK_BOOTSTRAP_SOURCE_DIR "${_vkbootstrap_source_dir}" CACHE PATH "Absolute path to the vk-bootstrap source directory" FORCE)
-set(VK_BOOTSTRAP_INCLUDE_DIR "${_vkbootstrap_source_dir}/src" CACHE PATH "Path to vk-bootstrap headers" FORCE)
-
-function(_define_vkbootstrap_target)
-    if(TARGET vk-bootstrap::vk-bootstrap)
-        return()
-    endif()
-
-    add_library(vk-bootstrap STATIC
-        "${VK_BOOTSTRAP_SOURCE_DIR}/src/VkBootstrap.cpp"
-    )
-    add_library(vk-bootstrap::vk-bootstrap ALIAS vk-bootstrap)
-
-    target_include_directories(vk-bootstrap
-        PUBLIC
-            "${VK_BOOTSTRAP_SOURCE_DIR}/src"
-    )
-    if(EXISTS "${VK_BOOTSTRAP_SOURCE_DIR}/include")
-        target_include_directories(vk-bootstrap PUBLIC "${VK_BOOTSTRAP_SOURCE_DIR}/include")
-    endif()
-    target_compile_features(vk-bootstrap PUBLIC cxx_std_17)
-    set_target_properties(vk-bootstrap PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-    if(TARGET Vulkan::Headers)
-        target_link_libraries(vk-bootstrap PUBLIC Vulkan::Headers)
-    elseif(TARGET Vulkan::Vulkan)
-        target_link_libraries(vk-bootstrap PUBLIC Vulkan::Vulkan)
-    else()
-        message(FATAL_ERROR "vk-bootstrap requires Vulkan::Headers or Vulkan::Vulkan to be available. Call find_package(Vulkan) before use_vkbootstrap().")
-    endif()
-endfunction()
 
 function(use_vkbootstrap TARGET_NAME)
     if(NOT TARGET ${TARGET_NAME})
         message(FATAL_ERROR "use_vkbootstrap called with unknown target `${TARGET_NAME}`")
     endif()
-
-    _define_vkbootstrap_target()
+    if(NOT TARGET vk-bootstrap::vk-bootstrap)
+        message(FATAL_ERROR "vk-bootstrap::vk-bootstrap not available. Include setup_vkbootstrap.cmake earlier.")
+    endif()
     target_link_libraries(${TARGET_NAME} PUBLIC vk-bootstrap::vk-bootstrap)
 endfunction()

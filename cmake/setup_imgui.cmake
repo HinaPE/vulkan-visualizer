@@ -1,6 +1,9 @@
 # ============================================================================
-# setup_imgui.cmake
-# Helper module to download and expose Dear ImGui (docking branch).
+# setup_imgui.cmake (modern)
+# Fetch Dear ImGui (docking) via FetchContent and define imgui target/backends.
+# Exposes:
+#   - use_imgui(<target>)
+#   - imgui_enable_backends(<target> BACKENDS sdl3;vulkan)
 # ============================================================================
 
 if(DEFINED _SETUP_IMGUI_INCLUDED)
@@ -8,68 +11,42 @@ if(DEFINED _SETUP_IMGUI_INCLUDED)
 endif()
 set(_SETUP_IMGUI_INCLUDED TRUE)
 
-set(IMGUI_VERSION "1.92.2b-docking" CACHE STRING "Dear ImGui docking tag to download")
-set(IMGUI_BASE_URL "https://github.com/ocornut/imgui/archive/refs/tags" CACHE STRING "Base URL for Dear ImGui archives")
+include(FetchContent)
 
-set(_imgui_archive "v${IMGUI_VERSION}.tar.gz")
-set(_imgui_deps_dir "${CMAKE_BINARY_DIR}/_deps")
-set(_imgui_archive_path "${_imgui_deps_dir}/${_imgui_archive}")
-set(_imgui_source_dir "${_imgui_deps_dir}/imgui-${IMGUI_VERSION}")
+set(IMGUI_VERSION "v1.92.2b-docking" CACHE STRING "Dear ImGui docking tag/commit")
 
-if(NOT EXISTS "${_imgui_source_dir}/imgui.cpp")
-    file(MAKE_DIRECTORY "${_imgui_deps_dir}")
+# Fetch imgui sources
+FetchContent_Declare(
+    imgui_src
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        ${IMGUI_VERSION}
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(imgui_src)
 
-    set(_imgui_url "${IMGUI_BASE_URL}/v${IMGUI_VERSION}.tar.gz")
-    message(STATUS "Downloading Dear ImGui ${IMGUI_VERSION} from ${_imgui_url}")
+# imgui source dir
+set(IMGUI_SOURCE_DIR ${imgui_src_SOURCE_DIR})
+set(IMGUI_INCLUDE_DIR ${IMGUI_SOURCE_DIR})
 
-    file(DOWNLOAD
-        "${_imgui_url}"
-        "${_imgui_archive_path}"
-        SHOW_PROGRESS
-        STATUS _imgui_download_status
-        TLS_VERIFY ON
-    )
-
-    list(GET _imgui_download_status 0 _imgui_status_code)
-    if(NOT _imgui_status_code EQUAL 0)
-        list(GET _imgui_download_status 1 _imgui_status_msg)
-        message(FATAL_ERROR "Failed to download Dear ImGui: ${_imgui_status_msg}")
-    endif()
-
-    execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E tar xzf "${_imgui_archive_path}"
-        WORKING_DIRECTORY "${_imgui_deps_dir}"
-        RESULT_VARIABLE _imgui_tar_result
-    )
-
-    if(NOT _imgui_tar_result EQUAL 0)
-        message(FATAL_ERROR "Failed to extract Dear ImGui archive (exit code ${_imgui_tar_result})")
-    endif()
-endif()
-
-set(IMGUI_SOURCE_DIR "${_imgui_source_dir}" CACHE PATH "Absolute path to the Dear ImGui source directory" FORCE)
-set(IMGUI_INCLUDE_DIR "${_imgui_source_dir}" CACHE PATH "Path to Dear ImGui headers" FORCE)
-
+# Core sources
 set(_IMGUI_CORE_SOURCES
-    "${IMGUI_SOURCE_DIR}/imgui.cpp"
-    "${IMGUI_SOURCE_DIR}/imgui_demo.cpp"
-    "${IMGUI_SOURCE_DIR}/imgui_draw.cpp"
-    "${IMGUI_SOURCE_DIR}/imgui_tables.cpp"
-    "${IMGUI_SOURCE_DIR}/imgui_widgets.cpp"
+    ${IMGUI_SOURCE_DIR}/imgui.cpp
+    ${IMGUI_SOURCE_DIR}/imgui_demo.cpp
+    ${IMGUI_SOURCE_DIR}/imgui_draw.cpp
+    ${IMGUI_SOURCE_DIR}/imgui_tables.cpp
+    ${IMGUI_SOURCE_DIR}/imgui_widgets.cpp
 )
 
 function(_define_imgui_target)
     if(TARGET imgui::imgui)
         return()
     endif()
-
     add_library(imgui STATIC ${_IMGUI_CORE_SOURCES})
     add_library(imgui::imgui ALIAS imgui)
-
     target_include_directories(imgui
         PUBLIC
-            "${IMGUI_SOURCE_DIR}"
-            "${IMGUI_SOURCE_DIR}/backends"
+            ${IMGUI_SOURCE_DIR}
+            ${IMGUI_SOURCE_DIR}/backends
     )
     target_compile_features(imgui PUBLIC cxx_std_17)
     set_target_properties(imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -79,7 +56,6 @@ function(use_imgui TARGET_NAME)
     if(NOT TARGET ${TARGET_NAME})
         message(FATAL_ERROR "use_imgui called with unknown target `${TARGET_NAME}`")
     endif()
-
     _define_imgui_target()
     target_link_libraries(${TARGET_NAME} PUBLIC imgui::imgui)
 endfunction()
@@ -88,7 +64,6 @@ function(imgui_enable_backends TARGET_NAME)
     if(NOT TARGET ${TARGET_NAME})
         message(FATAL_ERROR "imgui_enable_backends called with unknown target `${TARGET_NAME}`")
     endif()
-
     if(NOT IMGUI_SOURCE_DIR)
         message(FATAL_ERROR "IMGUI_SOURCE_DIR is not defined. Include setup_imgui.cmake before enabling backends.")
     endif()

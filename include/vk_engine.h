@@ -19,6 +19,18 @@
 #include <string_view>
 #include <vector>
 
+// Optional logging macros (no-op if VV_ENABLE_LOGGING is off)
+#ifdef VV_ENABLE_LOGGING
+#include <cstdio>
+#define VV_LOG_INFO(fmt, ...)  do { std::fprintf(stderr, "[INFO] " fmt "\n", ##__VA_ARGS__); } while(0)
+#define VV_LOG_WARN(fmt, ...)  do { std::fprintf(stderr, "[WARN] " fmt "\n", ##__VA_ARGS__); } while(0)
+#define VV_LOG_ERROR(fmt, ...) do { std::fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
+#else
+#define VV_LOG_INFO(...)  do {} while(0)
+#define VV_LOG_WARN(...)  do {} while(0)
+#define VV_LOG_ERROR(...) do {} while(0)
+#endif
+
 inline constexpr unsigned int FRAME_OVERLAP = 2; // frames in flight
 
 // DescriptorAllocator: single backing VkDescriptorPool with simple ratios.
@@ -182,6 +194,13 @@ public:
     void configure_window(uint32_t w, uint32_t h, std::string_view title);
     [[nodiscard]] uint32_t width() const { return state_.width; }
     [[nodiscard]] uint32_t height() const { return state_.height; }
+#ifdef VV_ENABLE_HOTRELOAD
+    // Register a path for hot-reload (recursively polled). Typical usage: shader source/output dirs.
+    void add_hot_reload_watch_path(std::string path);
+#endif
+#ifdef VV_ENABLE_LOGGING
+    void log_line(const std::string& s);
+#endif
 
 private:
     void sanitize_renderer_caps(RendererCaps& caps) const;
@@ -254,7 +273,36 @@ private:
     void create_imgui();
     void destroy_imgui();
     std::unique_ptr<UiSystem> ui_;
+#ifdef VV_ENABLE_LOGGING
+    std::vector<std::string> log_lines_;
+#endif
     std::vector<std::function<void()>> mdq_;
+
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+    // GPU timestamp query pool (2 timestamps per frame: begin/end)
+    VkQueryPool ts_query_pool_{};
+    double ts_period_ns_{1.0};
+    double last_gpu_ms_{0.0};
+    void create_timestamp_pool();
+    void destroy_timestamp_pool();
+#endif
+
+#ifdef VV_ENABLE_SCREENSHOT
+    struct PendingScreenshot { bool request{false}; std::string path; } screenshot_{};
+    void queue_swapchain_screenshot(VkCommandBuffer cmd, uint32_t imageIndex);
+#endif
+
+#ifdef VV_ENABLE_HOTRELOAD
+    struct WatchItem { std::string path; uint64_t stamp{}; };
+    std::vector<WatchItem> watch_list_;
+    double watch_accum_{0.0};
+    void poll_file_watches(const EngineContext& eng);
+#endif
+
+#ifdef VV_ENABLE_TONEMAP
+    bool use_srgb_swapchain_{false}; // gamma via sRGB swapchain format (minimal M0)
+    bool tonemap_enabled_{true};
+#endif
 
     struct EngineState { uint32_t width{1280}; uint32_t height{720}; std::string name{"Vulkan Visualizer"}; bool running{false}; bool initialized{false}; bool should_rendering{false}; bool resize_requested{false}; bool minimized{false}; bool focused{true}; uint64_t frame_number{0}; double time_sec{0.0}; double dt_sec{0.0}; } state_;
 };

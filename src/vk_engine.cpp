@@ -39,6 +39,17 @@
 #include <chrono>
 #include <stdexcept>
 #include <algorithm>
+#include <filesystem>
+#include <sstream>
+#include <iomanip>
+#include <cstring>
+#include <cstdlib>
+#include <ctime>
+
+#ifdef VV_ENABLE_SCREENSHOT
+#define STB_IMAGE_WRITE_IMPLEMENTATION_DISABLED
+#include <stb_image_write.h>
+#endif
 
 // ============================================================================
 // Utility Macros (minimal, self‑contained)
@@ -356,6 +367,10 @@ void VulkanEngine::init() {
     // 2) Create Vulkan context (instance, device, queues, allocator) using negotiated extensions.
     create_context(state_.width, state_.height, state_.name.c_str());
 
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+    create_timestamp_pool();
+#endif
+
     // 3) Post-context capability adjustment (attachments, presentation mode, etc.)
     EngineContext engPost = make_engine_context();
     renderer_->get_capabilities(engPost, renderer_caps_);
@@ -421,6 +436,13 @@ void VulkanEngine::run() {
             case SDL_EVENT_WINDOW_FOCUS_LOST: state_.focused = false; break;
             case SDL_EVENT_WINDOW_RESIZED:
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: state_.resize_requested = true; break;
+#ifdef VV_ENABLE_SCREENSHOT
+#if defined(SDL_EVENT_KEY_DOWN)
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.keysym.sym == SDLK_PRINTSCREEN) { screenshot_.request = true; screenshot_.path.clear(); }
+                break;
+#endif
+#endif
             default: break;
             }
         }
@@ -429,6 +451,11 @@ void VulkanEngine::run() {
         state_.dt_sec   = std::chrono::duration<double>(t_now - t_prev).count();
         state_.time_sec = std::chrono::duration<double>(t_now - t0).count();
         t_prev          = t_now;
+
+#ifdef VV_ENABLE_HOTRELOAD
+        watch_accum_ += state_.dt_sec;
+        if (watch_accum_ > 0.5) { poll_file_watches(eng); watch_accum_ = 0.0; }
+#endif
 
         if (!state_.should_rendering) { SDL_WaitEventTimeout(nullptr, 100); continue; }
 
@@ -494,6 +521,13 @@ void VulkanEngine::run() {
         case PresentationMode::RendererComposite: if (renderer_) renderer_->compose(cmd, eng, frm); break;
         case PresentationMode::DirectToSwapchain: default: break; }
 
+#ifdef VV_ENABLE_SCREENSHOT
+        if (screenshot_.request) {
+            queue_swapchain_screenshot(cmd, imageIndex);
+            // We'll wait and flush after submission below
+        }
+#endif
+
         if (ui_) {
             ui_->new_frame();
             if (renderer_) { renderer_->on_imgui(eng, frm); }
@@ -501,6 +535,18 @@ void VulkanEngine::run() {
         }
 
         end_frame(imageIndex, cmd);
+
+#ifdef VV_ENABLE_SCREENSHOT
+        if (screenshot_.request) {
+            // Ensure copy finished
+            vkQueueWaitIdle(ctx_.graphics_queue);
+            // Execute deferred CPU task(s) for this frame slot
+            for (auto& fn : frData.dq) fn();
+            frData.dq.clear();
+            screenshot_.request = false;
+        }
+#endif
+
         state_.frame_number++;
     }
 }
@@ -610,7 +656,8 @@ void VulkanEngine::create_context(int window_width, int window_height, const cha
     vkb::Instance vkb_inst = ib.build().value();
     ctx_.instance          = vkb_inst.instance;
     ctx_.debug_messenger   = vkb_inst.debug_messenger;
-    REQUIRE_TRUE(SDL_Init(SDL_INIT_VIDEO), std::string("SDL_Init failed: ") + SDL_GetError());
+    int sdl_init_rc = SDL_Init(SDL_INIT_VIDEO);
+    REQUIRE_TRUE(sdl_init_rc, std::string("SDL_Init failed: ") + SDL_GetError());
     REQUIRE_TRUE(ctx_.window = SDL_CreateWindow(app_name, window_width, window_height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE), std::string("SDL_CreateWindow failed: ") + SDL_GetError());
     REQUIRE_TRUE(SDL_Vulkan_CreateSurface(ctx_.window, ctx_.instance, nullptr, &ctx_.surface), std::string("SDL_Vulkan_CreateSurface failed: ") + SDL_GetError());
 
@@ -796,7 +843,7 @@ void VulkanEngine::blit_offscreen_to_swapchain(VkCommandBuffer cmd, uint32_t ima
     VkImageBlit2 blit{};
     blit.sType          = VK_STRUCTURE_TYPE_IMAGE_BLIT_2;
     blit.srcSubresource = {srcAtt.aspect, 0u, 0u, 1u};
-    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[0]  = {0, 0, 0};
     blit.srcOffsets[1]  = {static_cast<int32_t>(srcAtt.image.imageExtent.width), static_cast<int32_t>(srcAtt.image.imageExtent.height), 1};
     blit.dstOffsets[0]  = {0, 0, 0};
@@ -819,6 +866,15 @@ void VulkanEngine::blit_offscreen_to_swapchain(VkCommandBuffer cmd, uint32_t ima
 // ============================================================================
 void VulkanEngine::create_swapchain(uint32_t width, uint32_t height) {
     swapchain_.swapchain_image_format = renderer_caps_.preferred_swapchain_format;
+#ifdef VV_ENABLE_TONEMAP
+    // Minimal gamma: allow toggling to sRGB swapchain format when enabled
+    if (tonemap_enabled_) {
+        swapchain_.swapchain_image_format = VK_FORMAT_B8G8R8A8_SRGB;
+        use_srgb_swapchain_ = true;
+    } else {
+        use_srgb_swapchain_ = false;
+    }
+#endif
     VkSurfaceFormatKHR surface_fmt{swapchain_.swapchain_image_format, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
 
     vkb::Swapchain sc = vkb::SwapchainBuilder(ctx_.physical, ctx_.device, ctx_.surface)
@@ -1023,6 +1079,16 @@ void VulkanEngine::begin_frame(uint32_t& imageIndex, VkCommandBuffer& cmd) {
         uint64_t val    = fr.submitted_timeline_value;
         VkSemaphoreWaitInfo wi{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .pNext = nullptr, .flags = 0u, .semaphoreCount = 1u, .pSemaphores = &sem, .pValues = &val};
         VK_CHECK(vkWaitSemaphores(ctx_.device, &wi, UINT64_MAX));
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+        if (ts_query_pool_) {
+            const uint32_t base = static_cast<uint32_t>((state_.frame_number % FRAME_OVERLAP) * 2);
+            uint64_t ticks[2]{};
+            VkResult qres = vkGetQueryPoolResults(ctx_.device, ts_query_pool_, base, 2, sizeof(ticks), ticks, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            if (qres == VK_SUCCESS && ticks[1] > ticks[0]) {
+                last_gpu_ms_ = (double(ticks[1] - ticks[0]) * ts_period_ns_) / 1.0e6;
+            }
+        }
+#endif
     }
     const VkResult acq = vkAcquireNextImageKHR(ctx_.device, swapchain_.swapchain, UINT64_MAX, fr.imageAcquired, VK_NULL_HANDLE, &imageIndex);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR || acq == VK_SUBOPTIMAL_KHR) {
@@ -1032,10 +1098,23 @@ void VulkanEngine::begin_frame(uint32_t& imageIndex, VkCommandBuffer& cmd) {
     cmd = fr.mainCommandBuffer;
     VkCommandBufferBeginInfo bi{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .pNext = nullptr, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, .pInheritanceInfo = nullptr};
     VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+    if (ts_query_pool_) {
+        const uint32_t base = static_cast<uint32_t>((state_.frame_number % FRAME_OVERLAP) * 2);
+        vkCmdResetQueryPool(cmd, ts_query_pool_, base, 2);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, ts_query_pool_, base);
+    }
+#endif
 }
 
 // End recording, submit (with timeline + binary semaphores) and present image.
 void VulkanEngine::end_frame(uint32_t imageIndex, VkCommandBuffer cmd) {
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+    if (ts_query_pool_) {
+        const uint32_t base = static_cast<uint32_t>((state_.frame_number % FRAME_OVERLAP) * 2);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, ts_query_pool_, base + 1);
+    }
+#endif
     VK_CHECK(vkEndCommandBuffer(cmd));
     FrameData& fr = frames_[state_.frame_number % FRAME_OVERLAP];
 
@@ -1136,6 +1215,9 @@ void VulkanEngine::create_imgui() {
             ImGui::Text("Frame#:  %llu", static_cast<unsigned long long>(state_.frame_number));
             ImGui::Text("Time:    %.3f s", state_.time_sec);
             ImGui::Text("dt:      %.3f ms", state_.dt_sec * 1000.0);
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+            ImGui::Text("GPU:     %.3f ms (engine)", last_gpu_ms_);
+#endif
 
             ImGui::SeparatorText("Swapchain");
             ImGui::Text("Extent:  %u x %u", swapchain_.swapchain_extent.width, swapchain_.swapchain_extent.height);
@@ -1207,7 +1289,165 @@ void VulkanEngine::create_imgui() {
         }
         ImGui::End();
     });
+
+#ifdef VV_ENABLE_SCREENSHOT
+    // Simple control panel
+    ui_->add_panel([this] {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImVec2 pad(12.0f, 12.0f);
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 300.0f - pad.x, vp->WorkPos.y + pad.y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.4f);
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
+        if (ImGui::Begin("Controls##top-right", nullptr, flags)) {
+#ifdef VV_ENABLE_TONEMAP
+            ImGui::Checkbox("Use sRGB Swapchain (Gamma)", &tonemap_enabled_);
+            ImGui::SameLine();
+            if (ImGui::Button("Apply")) { recreate_swapchain(); }
+#endif
+            if (ImGui::Button("Screenshot (PrtSc)")) {
+                screenshot_.request = true;
+                screenshot_.path.clear();
+            }
+        }
+        ImGui::End();
+    });
+#endif
+
+#ifdef VV_ENABLE_LOGGING
+    // Log window (engine log lines)
+    ui_->add_panel([this] {
+        ImGui::Begin("Log");
+        for (const auto& line : log_lines_) ImGui::TextUnformatted(line.c_str());
+        ImGui::End();
+    });
+    // Record a startup message
+    log_line("Engine initialized");
+#endif
 }
 
 // Destroy ImGui backend & context.
 void VulkanEngine::destroy_imgui() { if (ui_) { ui_->shutdown(ctx_.device); ui_.reset(); } }
+
+#ifdef VV_ENABLE_GPU_TIMESTAMPS
+void VulkanEngine::create_timestamp_pool() {
+    VkPhysicalDeviceProperties props{}; vkGetPhysicalDeviceProperties(ctx_.physical, &props);
+    ts_period_ns_ = static_cast<double>(props.limits.timestampPeriod);
+    VkQueryPoolCreateInfo qci{.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .pNext = nullptr, .flags = 0u, .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = FRAME_OVERLAP * 2, .pipelineStatistics = 0u};
+    VK_CHECK(vkCreateQueryPool(ctx_.device, &qci, nullptr, &ts_query_pool_));
+    mdq_.emplace_back([&] { destroy_timestamp_pool(); });
+}
+void VulkanEngine::destroy_timestamp_pool() {
+    IF_NOT_NULL_DO_AND_SET(ts_query_pool_, vkDestroyQueryPool(ctx_.device, ts_query_pool_, nullptr), VK_NULL_HANDLE);
+}
+#endif
+
+#ifdef VV_ENABLE_SCREENSHOT
+static std::string default_screenshot_name() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::ostringstream oss; oss << "screenshot_" << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".png";
+    return oss.str();
+}
+
+void VulkanEngine::queue_swapchain_screenshot(VkCommandBuffer cmd, uint32_t imageIndex) {
+    // Always capture swapchain LDR to PNG
+    if (imageIndex >= swapchain_.swapchain_images.size()) return;
+    const uint32_t w = swapchain_.swapchain_extent.width;
+    const uint32_t h = swapchain_.swapchain_extent.height;
+    VkImage img = swapchain_.swapchain_images[imageIndex];
+
+    // Create staging buffer
+    VkDeviceSize sz = static_cast<VkDeviceSize>(w) * static_cast<VkDeviceSize>(h) * 4u;
+    VkBuffer buffer = VK_NULL_HANDLE; VmaAllocation alloc{}; VmaAllocationInfo aout{};
+    VkBufferCreateInfo bci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = nullptr, .flags = 0u, .size = sz, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .queueFamilyIndexCount = 0u, .pQueueFamilyIndices = nullptr};
+    VmaAllocationCreateInfo ainfo{.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, .usage = VMA_MEMORY_USAGE_AUTO, .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+    VK_CHECK(vmaCreateBuffer(ctx_.allocator, &bci, &ainfo, &buffer, &alloc, &aout));
+
+    // Transition image to TRANSFER_SRC, then copy to buffer, back to TRANSFER_DST for UI overlay
+    VkImageMemoryBarrier2 to_src{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .pNext = nullptr, .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, .image = img, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    VkDependencyInfo dep_to_src{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .pNext = nullptr, .dependencyFlags = 0u, .memoryBarrierCount = 0u, .pMemoryBarriers = nullptr, .bufferMemoryBarrierCount = 0u, .pBufferMemoryBarriers = nullptr, .imageMemoryBarrierCount = 1u, .pImageMemoryBarriers = &to_src};
+    vkCmdPipelineBarrier2(cmd, &dep_to_src);
+
+    VkBufferImageCopy region{.bufferOffset = 0, .bufferRowLength = 0, .bufferImageHeight = 0, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageOffset = {0, 0, 0}, .imageExtent = {w, h, 1}};
+    vkCmdCopyImageToBuffer(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+
+    VkImageMemoryBarrier2 back_dst{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .pNext = nullptr, .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .image = img, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    VkDependencyInfo dep_back{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .pNext = nullptr, .dependencyFlags = 0u, .memoryBarrierCount = 0u, .pMemoryBarriers = nullptr, .bufferMemoryBarrierCount = 0u, .pBufferMemoryBarriers = nullptr, .imageMemoryBarrierCount = 1u, .pImageMemoryBarriers = &back_dst};
+    vkCmdPipelineBarrier2(cmd, &dep_back);
+
+    // Defer CPU write to after submission
+    FrameData& fr = frames_[state_.frame_number % FRAME_OVERLAP];
+    const std::string outPath = screenshot_.path.empty() ? default_screenshot_name() : screenshot_.path;
+    fr.dq.emplace_back([this, buffer, alloc, outPath, w, h] {
+        // BGRA8 -> RGBA8
+        void* p = nullptr; vmaMapMemory(ctx_.allocator, alloc, &p);
+        const uint8_t* bgra = static_cast<const uint8_t*>(p);
+        std::vector<uint8_t> rgba; rgba.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 4ull);
+        for (size_t i = 0, n = static_cast<size_t>(w) * static_cast<size_t>(h); i < n; ++i) {
+            rgba[i * 4 + 0] = bgra[i * 4 + 2]; // R
+            rgba[i * 4 + 1] = bgra[i * 4 + 1]; // G
+            rgba[i * 4 + 2] = bgra[i * 4 + 0]; // B
+            rgba[i * 4 + 3] = bgra[i * 4 + 3]; // A
+        }
+        stbi_write_png(outPath.c_str(), static_cast<int>(w), static_cast<int>(h), 4, rgba.data(), static_cast<int>(w * 4));
+        vmaUnmapMemory(ctx_.allocator, alloc);
+        vmaDestroyBuffer(ctx_.allocator, buffer, alloc);
+#ifdef VV_ENABLE_LOGGING
+        log_line(std::string("Saved screenshot: ") + outPath);
+#endif
+    });
+}
+#endif
+
+#ifdef VV_ENABLE_HOTRELOAD
+void VulkanEngine::add_hot_reload_watch_path(std::string path) {
+    if (path.empty()) return;
+    // Normalize to absolute
+    std::error_code ec{};
+    std::filesystem::path p = std::filesystem::absolute(path, ec);
+    if (ec) p = std::filesystem::path(path);
+    uint64_t latest = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(p, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+        if (ec) break;
+        if (!it->is_regular_file()) continue;
+        auto ft = it->last_write_time(ec); if (ec) continue;
+        latest = std::max<uint64_t>(latest, static_cast<uint64_t>(ft.time_since_epoch().count()));
+    }
+    watch_list_.push_back(WatchItem{p.string(), latest});
+}
+
+void VulkanEngine::poll_file_watches(const EngineContext& eng) {
+    bool changed = false;
+    for (auto& w : watch_list_) {
+        std::error_code ec{};
+        uint64_t latest = w.stamp;
+        for (auto it = std::filesystem::recursive_directory_iterator(w.path, std::filesystem::directory_options::skip_permission_denied, ec);
+             it != std::filesystem::recursive_directory_iterator(); ++it) {
+            if (ec) break;
+            if (!it->is_regular_file()) continue;
+            auto ft = it->last_write_time(ec); if (ec) continue;
+            latest = std::max<uint64_t>(latest, static_cast<uint64_t>(ft.time_since_epoch().count()));
+        }
+        if (latest > w.stamp) { w.stamp = latest; changed = true; }
+    }
+    if (changed && renderer_) { renderer_->reload_assets(eng); }
+}
+#endif
+
+#ifdef VV_ENABLE_LOGGING
+void VulkanEngine::log_line(const std::string& s) {
+    log_lines_.push_back(s);
+    if (log_lines_.size() > 2000) {
+        log_lines_.erase(log_lines_.begin(), log_lines_.begin() + (log_lines_.size() - 2000));
+    }
+}
+#endif

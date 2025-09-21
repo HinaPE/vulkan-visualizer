@@ -5,3 +5,5 @@ cmake-build-release
 blender/modules/
 example/demo1.blend
 build
+cmake-build-*
+build-*
