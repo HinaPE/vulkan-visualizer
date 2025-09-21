@@ -141,6 +141,8 @@ public:
     void on_imgui(const EngineContext& eng, const FrameContext& f) override {
         auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
         if (host) {
+            // First draw a full-window dark red overlay when Space is pressed, then draw the mini axis on top
+            host->add_overlay([this]{ cam_.imgui_draw_nav_overlay_space_tint(); });
             host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); });
         }
 

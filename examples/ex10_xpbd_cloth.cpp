@@ -130,7 +130,10 @@ public:
 
     void on_imgui(const EngineContext& eng, const FrameContext&) override {
         auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
-        if (host) { host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); }); }
+        if (host) {
+            host->add_overlay([this]{ cam_.imgui_draw_nav_overlay_space_tint(); });
+            host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); });
+        }
         if (!host) return;
         host->add_tab("Cloth (XPBD)", [this]{
             ImGui::Text("XPBD cloth (CPU sim + Vulkan draw)"); ImGui::Separator();

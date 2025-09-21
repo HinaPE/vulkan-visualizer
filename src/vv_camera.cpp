@@ -543,10 +543,10 @@ void CameraService::imgui_draw_mini_axis_gizmo(int margin_px, int size_px, float
     draw->AddCircle(center, s * 0.5f, IM_COL32(255, 255, 255, 60), 48, 1.0f);
 
     auto rot_mul = [&](const float3& v) -> float3 {
-        // 使用视图矩阵的旋转部分将世界坐标轴变换到视图空间
-        float x = view_.m[0]*v.x + view_.m[4]*v.y + view_.m[8]*v.z + view_.m[12]*1;
-        float y = view_.m[1]*v.x + view_.m[5]*v.y + view_.m[9]*v.z + view_.m[13]*1;
-        float z = view_.m[2]*v.x + view_.m[6]*v.y + view_.m[10]*v.z + view_.m[14]*1;
+        // rotation only
+        float x = view_.m[0]*v.x + view_.m[4]*v.y + view_.m[8]*v.z;
+        float y = view_.m[1]*v.x + view_.m[5]*v.y + view_.m[9]*v.z;
+        float z = view_.m[2]*v.x + view_.m[6]*v.y + view_.m[10]*v.z;
         return {x,y,z};
     };
 
@@ -578,6 +578,27 @@ void CameraService::imgui_draw_mini_axis_gizmo(int margin_px, int size_px, float
     // 背面（视图空间 z>0）先画，正面后画，保证遮挡关系
     for (const auto& it : items) if (it.vv.z >  0.0f) draw_axis(it, true);
     for (const auto& it : items) if (it.vv.z <= 0.0f) draw_axis(it, false);
+}
+
+void CameraService::imgui_draw_nav_overlay_space_tint(uint32_t rgba) const {
+    if (!ImGui::GetCurrentContext()) return;
+    if (!key_space_) return; // only when Space is pressed (navigation gesture)
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+    ImDrawList* dl = ImGui::GetForegroundDrawList(vp);
+    ImU32 col;
+    if (rgba == 0) {
+        col = IM_COL32(120, 20, 20, 96); // default dark red, translucent
+    } else {
+        unsigned r = (rgba >> 24) & 0xFFu;
+        unsigned g = (rgba >> 16) & 0xFFu;
+        unsigned b = (rgba >> 8)  & 0xFFu;
+        unsigned a = (rgba >> 0)  & 0xFFu;
+        col = IM_COL32((int)r, (int)g, (int)b, (int)a);
+    }
+    const ImVec2 p0 = vp->Pos;
+    const ImVec2 p1 = ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y);
+    dl->AddRectFilled(p0, p1, col);
 }
 
 } // namespace vv
