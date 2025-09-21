@@ -11,7 +11,7 @@
 基于对 `include/vk_engine.h` 与 `src/vk_engine.cpp` 的阅读，当前引擎具备：
 
 - 底层与依赖
-  - Vulkan 1.3 动态渲染、Synchronization2、时间线信号量（Timeline Semaphore）。
+  - Vulkan 1.4.321 动态渲染、Synchronization2、时间线信号量（Timeline Semaphore）。
   - SDL3（窗口/输入），VkBootstrap（Instance/Device/Swapchain），VMA（内存分配）。
   - ImGui（Docking + 多视口）后端（SDL3 + Vulkan）。
 - 引擎职责（VulkanEngine）
