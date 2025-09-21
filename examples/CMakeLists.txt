@@ -22,6 +22,8 @@ set(SHADERS
         axis_color.frag
         sphere_impostor.vert
         sphere_impostor.frag
+        cloth.vert
+        cloth.frag
 )
 set(SPV_FILES)
 foreach (SH ${SHADERS})
