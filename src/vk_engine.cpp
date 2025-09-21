@@ -458,10 +458,13 @@ void VulkanEngine::run() {
 
 #ifdef VV_ENABLE_SCREENSHOT
         if (screenshot_.request) {
-            vkQueueWaitIdle(ctx_.graphics_queue);
-            for (auto& fn : frData.dq) fn();
-            frData.dq.clear();
-            screenshot_.request = false;
+            // Clear request only after a copy was actually queued (dq non-empty)
+            if (!frData.dq.empty()) {
+                vkQueueWaitIdle(ctx_.graphics_queue);
+                for (auto& fn : frData.dq) fn();
+                frData.dq.clear();
+                screenshot_.request = false;
+            }
         }
 #endif
 
@@ -1084,7 +1087,7 @@ void VulkanEngine::create_imgui() {
             // Defer swapchain recreate to next frame to avoid mid-frame invalidation
             if (ImGui::Button("Apply")) { state_.resize_requested = true; }
 #endif
-            if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); printf("???"); }
+            if (ImGui::Button("Screenshot (PrtSc)")) { screenshot_.request = true; screenshot_.path.clear(); }
         }
         ImGui::End();
     });
@@ -1146,6 +1149,9 @@ void VulkanEngine::queue_swapchain_screenshot(VkCommandBuffer cmd, uint32_t imag
 
     FrameData& fr = frames_[state_.frame_number % FRAME_OVERLAP];
     const std::string outPath = screenshot_.path.empty() ? default_screenshot_name() : screenshot_.path;
+#ifdef VV_ENABLE_LOGGING
+    log_line(std::string("Queued screenshot: ") + outPath);
+#endif
     fr.dq.emplace_back([this, buffer, alloc, outPath, w, h] {
         void* p = nullptr; vmaMapMemory(ctx_.allocator, alloc, &p);
         const uint8_t* bgra = static_cast<const uint8_t*>(p);
