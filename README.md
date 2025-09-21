@@ -1,4 +1,4 @@
-# Vulkan Visualizer (v0.7.0)
+# Vulkan Visualizer (v0.8.0)
 
 [![Windows CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/windows-build.yml)
 [![Linux CI](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/vulkan-visualizer/actions/workflows/linux-build.yml)
