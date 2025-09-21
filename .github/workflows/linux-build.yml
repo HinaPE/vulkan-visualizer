@@ -19,7 +19,7 @@ jobs:
       matrix:
         build_type: [Release, Debug]
     env:
-      VULKAN_SDK_VERSION: 1.4.321.1
+      VULKAN_SDK_VERSION: latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,6 +37,11 @@ jobs:
           cache: true
           quiet: true
 
+      - name: Verify Vulkan SDK tools
+        run: |
+          echo "VULKAN_SDK=$VULKAN_SDK"
+          if [ -x "$VULKAN_SDK/bin/glslc" ]; then "$VULKAN_SDK/bin/glslc" --version; else echo 'glslc not found'; fi
+
       - name: Cache third-party downloads
         uses: actions/cache@v4
         with:
@@ -48,7 +53,7 @@ jobs:
 
       - name: Configure (${{ matrix.build_type }})
         run: |
-          cmake -S . -B build -G Ninja -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake -S . -B build -G Ninja -DVULKAN_VISUALIZER_BUILD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build (${{ matrix.build_type }})
         run: |
@@ -70,6 +75,7 @@ jobs:
           name: linux-${{ matrix.build_type }}
           path: artifacts
           if-no-files-found: error
+          retention-days: 7
 
       - name: Shader dir list (${{ matrix.build_type }})
         if: success()
