@@ -2,7 +2,6 @@
 #include <vulkan/vulkan.h>
 #include <cstdio>
 #include <cstdlib>
-#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -16,7 +15,6 @@
 
 namespace {
 
-// Read whole binary file.
 std::vector<char> load_binary(std::string_view path) {
     std::ifstream f(std::string(path), std::ios::binary | std::ios::ate);
     if (!f) throw std::runtime_error("open fail: " + std::string(path));
@@ -91,14 +89,12 @@ public:
     }
 
     void reload_assets(const EngineContext& eng) override {
-        // Rebuild graphics pipeline from updated SPIR-V
         if (!eng.device) return;
         if (pipeline_) vkDestroyPipeline(eng.device, pipeline_, nullptr);
         if (layout_)   vkDestroyPipelineLayout(eng.device, layout_, nullptr);
         pipeline_ = VK_NULL_HANDLE; layout_ = VK_NULL_HANDLE;
-        device_ = eng.device; // ensure valid
-        try { create_graphics_pipeline(); }
-        catch(...) { /* keep silent; HUD/logs will indicate issues */ }
+        device_ = eng.device;
+        try { create_graphics_pipeline(); } catch(...) {}
     }
 
 private:
@@ -169,7 +165,6 @@ int main() {
         engine.configure_window(1280, 720, "VulkanVisualizer Triangle");
         engine.set_renderer(std::make_unique<TriangleRenderer>());
 #ifdef VV_ENABLE_HOTRELOAD
-        // Watch both source and output shader directories for changes
         engine.add_hot_reload_watch_path(std::string(SHADER_SOURCE_DIR));
         engine.add_hot_reload_watch_path(std::string(SHADER_OUTPUT_DIR));
 #endif

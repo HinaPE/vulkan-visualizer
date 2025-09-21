@@ -1,12 +1,6 @@
 #ifndef VULKAN_VISUALIZER_VK_ENGINE_H
 #define VULKAN_VISUALIZER_VK_ENGINE_H
 
-// vk_engine.h
-// Minimal public engine interfaces: renderer negotiation, frame/context
-// snapshots, and VulkanEngine owning lifecycle & delegation. Comments are
-// concise and focus on contract not implementation details.
-
-#include "vk_mem_alloc.h"
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
 
@@ -19,7 +13,10 @@
 #include <string_view>
 #include <vector>
 
-// Optional logging macros (no-op if VV_ENABLE_LOGGING is off)
+// VMA handle fwd decls
+struct VmaAllocator_T; using VmaAllocator = VmaAllocator_T*;
+struct VmaAllocation_T; using VmaAllocation = VmaAllocation_T*;
+
 #ifdef VV_ENABLE_LOGGING
 #include <cstdio>
 #define VV_LOG_INFO(fmt, ...)  do { std::fprintf(stderr, "[INFO] " fmt "\n", ##__VA_ARGS__); } while(0)
@@ -31,22 +28,19 @@
 #define VV_LOG_ERROR(...) do {} while(0)
 #endif
 
-inline constexpr unsigned int FRAME_OVERLAP = 2; // frames in flight
+inline constexpr unsigned int FRAME_OVERLAP = 2;
 
-// DescriptorAllocator: single backing VkDescriptorPool with simple ratios.
 struct DescriptorAllocator {
     struct PoolSizeRatio { VkDescriptorType type; float ratio; };
     VkDescriptorPool pool{};
     void init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios);
-    void clear_descriptors(VkDevice device) const;          // reset all sets
-    void destroy_pool(VkDevice device) const;               // destroy pool
-    VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout) const; // allocate one set
+    void clear_descriptors(VkDevice device) const;
+    void destroy_pool(VkDevice device) const;
+    VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout) const;
 };
 
-// Presentation pipeline mode.
 enum class PresentationMode : uint8_t { EngineBlit, RendererComposite, DirectToSwapchain };
 
-// Attachment request issued by a renderer (engine creates images).
 struct AttachmentRequest {
     std::string name;
     VkFormat format{VK_FORMAT_R16G16B16A16_SFLOAT};
@@ -56,7 +50,6 @@ struct AttachmentRequest {
     VkImageLayout initial_layout{VK_IMAGE_LAYOUT_GENERAL};
 };
 
-// Immutable view of an attachment for the frame.
 struct AttachmentView {
     std::string_view name;
     VkImage image{VK_NULL_HANDLE};
@@ -69,7 +62,6 @@ struct AttachmentView {
     VkImageLayout current_layout{VK_IMAGE_LAYOUT_UNDEFINED};
 };
 
-// EngineContext: stable device/queue level handles (re-created on swapchain rebuild if needed).
 struct EngineContext {
     VkInstance instance{};
     VkPhysicalDevice physical{};
@@ -85,10 +77,9 @@ struct EngineContext {
     uint32_t compute_queue_family{};
     uint32_t transfer_queue_family{};
     uint32_t present_queue_family{};
-    void* services{}; // reserved future service interface
+    void* services{}; // reserved
 };
 
-// FrameContext: per-frame snapshot of dynamic state + negotiated attachments.
 struct FrameContext {
     uint64_t frame_index{};
     uint32_t image_index{};
@@ -107,7 +98,6 @@ struct FrameContext {
     PresentationMode presentation_mode{PresentationMode::EngineBlit};
 };
 
-// RendererCaps: renderer -> engine contract negotiation fields.
 struct RendererCaps {
     uint32_t api_version{};
     uint32_t frames_in_flight{FRAME_OVERLAP};
@@ -129,7 +119,6 @@ struct RendererCaps {
     bool enable_imgui{true};
     bool allow_async_compute{false};
     bool allow_async_transfer{false};
-    // extended feature requests
     bool need_ray_tracing_pipeline{false};
     bool need_acceleration_structure{false};
     bool need_ray_query{false};
@@ -140,16 +129,8 @@ struct RendererCaps {
     std::vector<const char*> extra_device_extensions{};
 };
 
-// RendererStats: optional runtime metrics.
-struct RendererStats {
-    uint64_t draw_calls{};
-    uint64_t dispatches{};
-    uint64_t triangles{};
-    double cpu_ms{};
-    double gpu_ms{};
-};
+struct RendererStats { uint64_t draw_calls{}; uint64_t dispatches{}; uint64_t triangles{}; double cpu_ms{}; double gpu_ms{}; };
 
-// IRenderer: application implemented renderer facade.
 class IRenderer {
 public:
     virtual ~IRenderer() = default;
@@ -178,7 +159,6 @@ public:
     virtual bool get_option_str(const char*, const char*&) const { return false; }
 };
 
-// VulkanEngine: owns Vulkan objects, frame loop & renderer dispatch.
 class VulkanEngine {
 public:
     VulkanEngine();
@@ -195,7 +175,6 @@ public:
     [[nodiscard]] uint32_t width() const { return state_.width; }
     [[nodiscard]] uint32_t height() const { return state_.height; }
 #ifdef VV_ENABLE_HOTRELOAD
-    // Register a path for hot-reload (recursively polled). Typical usage: shader source/output dirs.
     void add_hot_reload_watch_path(std::string path);
 #endif
 #ifdef VV_ENABLE_LOGGING
@@ -279,7 +258,6 @@ private:
     std::vector<std::function<void()>> mdq_;
 
 #ifdef VV_ENABLE_GPU_TIMESTAMPS
-    // GPU timestamp query pool (2 timestamps per frame: begin/end)
     VkQueryPool ts_query_pool_{};
     double ts_period_ns_{1.0};
     double last_gpu_ms_{0.0};
@@ -300,7 +278,7 @@ private:
 #endif
 
 #ifdef VV_ENABLE_TONEMAP
-    bool use_srgb_swapchain_{false}; // gamma via sRGB swapchain format (minimal M0)
+    bool use_srgb_swapchain_{false};
     bool tonemap_enabled_{true};
 #endif
 
