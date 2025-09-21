@@ -92,7 +92,7 @@ void CameraService::recompute_cached_() {
         const float pitch = deg2rad(state_.pitch_deg);
         const float cp = std::cos(pitch), sp = std::sin(pitch);
         const float cy = std::cos(yaw),   sy = std::sin(yaw);
-        float3 dir{ cp * cy, sp, cp * sy };
+        float3 dir{ cp * cy, -sp, cp * sy }; // note: -sp so positive pitch moves camera up (look down)
         float3 eye = state_.target - dir * state_.distance;
         view_ = make_look_at(eye, state_.target, {0,1,0});
     } else {
@@ -181,7 +181,7 @@ float3   CameraService::eye_position() const {
         const float pitch = deg2rad(state_.pitch_deg);
         const float cp = std::cos(pitch), sp = std::sin(pitch);
         const float cy = std::cos(yaw),   sy = std::sin(yaw);
-        float3 dir{ cp * cy, sp, cp * sy };
+        float3 dir{ cp * cy, -sp, cp * sy }; // keep consistent with recompute_cached_
         return state_.target - dir * state_.distance;
     } else {
         return state_.eye;
