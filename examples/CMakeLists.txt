@@ -18,6 +18,10 @@ set(SHADERS
         comp_noise.comp
         simple3d.vert
         simple3d.frag
+        axis_box.vert
+        axis_color.frag
+        sphere_impostor.vert
+        sphere_impostor.frag
 )
 set(SPV_FILES)
 foreach (SH ${SHADERS})
@@ -53,7 +57,6 @@ function(add_vv_example name src)
     endif ()
 endfunction()
 
-# ex00..ex09
 add_vv_example(ex00_basic_window ex00_basic_window.cpp)
 add_vv_example(ex01_imgui_minimal_ui ex01_imgui_minimal_ui.cpp)
 add_vv_example(ex02_shader_hot_reload ex02_shader_hot_reload.cpp)
@@ -64,3 +67,4 @@ add_vv_example(ex06_presentation_modes_showcase ex06_presentation_modes_showcase
 add_vv_example(ex07_direct_to_swapchain ex07_direct_to_swapchain.cpp)
 add_vv_example(ex08_screenshot_workflow ex08_screenshot_workflow.cpp)
 add_vv_example(ex09_3dviewport ex09_3dviewport.cpp)
+add_vv_example(ex10_coordinate ex10_coordinate.cpp)

@@ -289,7 +289,7 @@ private:
 
 #ifdef VV_ENABLE_TONEMAP
     bool use_srgb_swapchain_{false};
-    bool tonemap_enabled_{true};
+    bool tonemap_enabled_{false};
 #endif
 
     struct EngineState { uint32_t width{1280}; uint32_t height{720}; std::string name{"Vulkan Visualizer"}; bool running{false}; bool initialized{false}; bool should_rendering{false}; bool resize_requested{false}; bool minimized{false}; bool focused{true}; uint64_t frame_number{0}; double time_sec{0.0}; double dt_sec{0.0}; } state_;
