@@ -47,8 +47,9 @@ float4x4 make_look_at(const float3& eye, const float3& center, const float3& up_
 float4x4 make_perspective(float fovy_rad, float aspect, float znear, float zfar) {
     const float f = 1.0f / std::tan(fovy_rad * 0.5f);
     float4x4 M{};
+    // Flip Y in projection so that world +Y maps to screen-up with standard Vulkan viewport (height>0)
     M.m = { f/aspect, 0, 0, 0,
-            0, f, 0, 0,
+            0, -f, 0, 0,
             0, 0, (zfar+znear)/(znear-zfar), -1,
             0, 0, (2* zfar* znear)/(znear-zfar), 0 };
     return M;
@@ -56,10 +57,11 @@ float4x4 make_perspective(float fovy_rad, float aspect, float znear, float zfar)
 
 float4x4 make_ortho(float left, float right, float bottom, float top, float znear, float zfar) {
     float4x4 M{};
+    // Start from standard ortho then apply Y flip (negate row 1: scale and translation)
     M.m = { 2.0f/(right-left), 0, 0, 0,
-            0, 2.0f/(top-bottom), 0, 0,
+            0, -2.0f/(top-bottom), 0, 0,
             0, 0, -2.0f/(zfar-znear), 0,
-            -(right+left)/(right-left), -(top+bottom)/(top-bottom), -(zfar+znear)/(zfar-znear), 1 };
+            -(right+left)/(right-left), (top+bottom)/(top-bottom), -(zfar+znear)/(zfar-znear), 1 };
     return M;
 }
 
@@ -77,7 +79,8 @@ bool project_to_screen(const float3& p_world, const float4x4& view, const float4
     if (cw <= 0.0f) return false;
     const float ndc_x = cx / cw; const float ndc_y = cy / cw; // ignore z
     out_x = (ndc_x * 0.5f + 0.5f) * static_cast<float>(screen_w);
-    out_y = (1.0f - (ndc_y * 0.5f + 0.5f)) * static_cast<float>(screen_h); // flip Y for top-left origin
+    // After Y-flip in projection, use non-inverted mapping to framebuffer (top-left origin)
+    out_y = (ndc_y * 0.5f + 0.5f) * static_cast<float>(screen_h);
     return true;
 }
 
