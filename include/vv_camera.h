@@ -6,9 +6,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <optional>
 #include <array>
-#include <functional>
 
 // Forward declare minimal engine structs to avoid including vk headers
 struct EngineContext;
@@ -45,8 +43,6 @@ enum class CameraProjection : uint8_t { Perspective, Orthographic };
 enum class CameraMode : uint8_t { Orbit, Fly };
 
 struct BoundingBox { float3 min{0,0,0}; float3 max{0,0,0}; bool valid{false}; };
-
-enum class AxesAnchor : uint8_t { ScreenCorner, WorldOrigin, WorldTarget };
 
 struct CameraState {
     // Common
@@ -116,19 +112,6 @@ public:
 
     // ImGui helpers (optional, safe if ImGui not present)
     void imgui_panel(bool* p_open = nullptr);
-    void imgui_draw_overlay(int viewport_w, int viewport_h);
-
-    // Grid / axes toggles
-    void set_show_grid(bool s) { show_grid_ = s; }
-    void set_show_axes(bool s) { show_axes_ = s; }
-    [[nodiscard]] bool show_grid() const { return show_grid_; }
-    [[nodiscard]] bool show_axes() const { return show_axes_; }
-
-    // Axes anchor config
-    void set_axes_anchor(AxesAnchor a) { axes_anchor_ = a; }
-    [[nodiscard]] AxesAnchor axes_anchor() const { return axes_anchor_; }
-    void set_axes_world_length(float l) { axes_world_len_ = l; }
-    [[nodiscard]] float axes_world_length() const { return axes_world_len_; }
 
 private:
     // Internals
@@ -144,10 +127,6 @@ private:
     void end_fly_(const EngineContext* eng);
 
     void apply_inertia_(double dt);
-
-    // Overlay helpers
-    void draw_axes_overlay_(int viewport_w, int viewport_h);
-    void draw_grid_overlay_(int viewport_w, int viewport_h);
 
     // Animation
     void start_animation_to_(const CameraState& dst, float duration_sec);
@@ -180,15 +159,8 @@ private:
     float anim_dur_{0.0f};
     CameraState anim_from_{};
     CameraState anim_to_{};
-
-    // Overlay toggles
-    bool show_grid_{true};
-    bool show_axes_{true};
-    AxesAnchor axes_anchor_{AxesAnchor::WorldOrigin};
-    float axes_world_len_{0.75f};
 };
 
 } // namespace vv
 
 #endif // VULKAN_VISUALIZER_VV_CAMERA_H
-

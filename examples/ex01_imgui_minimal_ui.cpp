@@ -6,7 +6,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include "vv_camera.h"
 
 #ifndef VK_CHECK
 #define VK_CHECK(x) do{VkResult r=(x);if(r!=VK_SUCCESS)throw std::runtime_error("Vulkan error: "+std::to_string(r));}while(false)
@@ -100,9 +99,6 @@ public:
         VK_CHECK(vkCreateGraphicsPipelines(dev,VK_NULL_HANDLE,1,&pci,nullptr,&pipe));
         vkDestroyShaderModule(dev, vs, nullptr);
         vkDestroyShaderModule(dev, fs, nullptr);
-        // Set camera axes anchor to world origin by default for this example
-        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
-        cam_.set_axes_world_length(1.0f);
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override
@@ -160,13 +156,6 @@ public:
           VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
-    void update(const EngineContext&, const FrameContext& f) override {
-        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
-        cam_.update(f.dt_sec, int(f.extent.width), int(f.extent.height));
-    }
-    void on_event(const SDL_Event& e, const EngineContext& eng, const FrameContext* f) override {
-        cam_.handle_event(e, &eng, f);
-    }
     void on_imgui(const EngineContext&, const FrameContext& f) override
     {
         ImGui::Begin("Controls");
@@ -176,9 +165,6 @@ public:
         ImGui::Text("FPS %.1f", ImGui::GetIO().Framerate);
         ImGui::Text("Press F12 to screenshot");
         ImGui::End();
-
-        cam_.imgui_panel(nullptr);
-
         ImGui::Begin("Log");
         ImGui::TextUnformatted("Dock panels freely. This example checks input/DPI and UI plumbing.");
         ImGui::End();
@@ -190,7 +176,6 @@ private:
     VkPipeline pipe{};
     VkFormat fmt{};
     float clear_[3]{0.05f, 0.07f, 0.12f};
-    vv::CameraService cam_{};
 };
 
 int main()

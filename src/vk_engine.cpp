@@ -297,7 +297,7 @@ void VulkanEngine::init() {
     renderer_->query_required_device_caps(renderer_caps_);
 
     auto ensure_ext = [&](const char* name) {
-        if (std::find(renderer_caps_.extra_device_extensions.begin(), renderer_caps_.extra_device_extensions.end(), name) == renderer_caps_.extra_device_extensions.end()) renderer_caps_.extra_device_extensions.push_back(name);
+        if (std::ranges::find(renderer_caps_.extra_device_extensions, name) == renderer_caps_.extra_device_extensions.end()) renderer_caps_.extra_device_extensions.push_back(name);
     };
     if (renderer_caps_.need_acceleration_structure) { ensure_ext(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME); ensure_ext(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME); }
     if (renderer_caps_.need_ray_tracing_pipeline) { ensure_ext(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME); ensure_ext(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME); ensure_ext(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME); }
@@ -891,7 +891,7 @@ void VulkanEngine::begin_frame(uint32_t& imageIndex, VkCommandBuffer& cmd) {
             const uint32_t base = static_cast<uint32_t>((state_.frame_number % FRAME_OVERLAP) * 2);
             uint64_t ticks[2]{};
             VkResult qres = vkGetQueryPoolResults(ctx_.device, ts_query_pool_, base, 2, sizeof(ticks), ticks, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
-            if (qres == VK_SUCCESS && ticks[1] > ticks[0]) last_gpu_ms_ = (double(ticks[1] - ticks[0]) * ts_period_ns_) / 1.0e6;
+            if (qres == VK_SUCCESS && ticks[1] > ticks[0]) last_gpu_ms_ = (static_cast<double>(ticks[1] - ticks[0]) * ts_period_ns_) / 1.0e6;
         }
 #endif
     }
@@ -1054,7 +1054,7 @@ void VulkanEngine::create_imgui() {
              ImGui::SeparatorText("Memory (VMA)");
              std::vector<VmaBudget> budgets(memProps.memoryHeapCount); vmaGetHeapBudgets(ctx_.allocator, budgets.data());
              uint64_t totalBudget = 0, totalUsage = 0; for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) { totalBudget += budgets[i].budget; totalUsage += budgets[i].usage; }
-             auto fmtMB = [](uint64_t bytes) { return double(bytes) / (1024.0 * 1024.0); };
+             auto fmtMB = [](uint64_t bytes) { return static_cast<double>(bytes) / (1024.0 * 1024.0); };
              ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
          }
          ImGui::End();
@@ -1155,7 +1155,7 @@ void VulkanEngine::queue_swapchain_screenshot(VkCommandBuffer cmd, uint32_t imag
 #endif
 
 #ifdef VV_ENABLE_HOTRELOAD
-void VulkanEngine::add_hot_reload_watch_path(std::string path) {
+void VulkanEngine::add_hot_reload_watch_path(const std::string& path) {
     if (path.empty()) return;
     std::error_code ec{}; std::filesystem::path p = std::filesystem::absolute(path, ec); if (ec) p = std::filesystem::path(path);
     uint64_t latest = 0;

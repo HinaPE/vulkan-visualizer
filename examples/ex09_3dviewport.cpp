@@ -16,17 +16,17 @@ static std::vector<char> load_spv(const std::string& p)
 {
     std::ifstream f(p, std::ios::binary | std::ios::ate);
     if (!f) throw std::runtime_error("open "+p);
-    size_t s = (size_t)f.tellg();
+    size_t s = static_cast<size_t>(f.tellg());
     f.seekg(0);
     std::vector<char> d(s);
-    f.read(d.data(), s);
+    f.read(d.data(), static_cast<std::streamsize>(s));
     return d;
 }
 
 static VkShaderModule make_shader(VkDevice d, const std::vector<char>& b)
 {
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    ci.codeSize = b.size();
+    ci.codeSize = static_cast<uint32_t>(b.size());
     ci.pCode = reinterpret_cast<const uint32_t*>(b.data());
     VkShaderModule m{}; VK_CHECK(vkCreateShaderModule(d, &ci, nullptr, &m));
     return m;
@@ -87,8 +87,6 @@ public:
         // initial camera
         cam_.set_mode(vv::CameraMode::Orbit);
         vv::CameraState s = cam_.state(); s.target = {0,0,0}; s.distance = 3.5f; s.pitch_deg = 20.0f; s.yaw_deg = -30.0f; s.znear = 0.01f; s.zfar = 100.0f; cam_.set_state(s);
-        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
-        cam_.set_axes_world_length(1.0f);
     }
 
     void destroy(const EngineContext& e, const RendererCaps&) override {
@@ -98,8 +96,7 @@ public:
     }
 
     void update(const EngineContext&, const FrameContext& f) override {
-        cam_.set_axes_anchor(vv::AxesAnchor::WorldOrigin);
-        cam_.update(f.dt_sec, int(f.extent.width), int(f.extent.height));
+        cam_.update(f.dt_sec, static_cast<int>(f.extent.width), static_cast<int>(f.extent.height));
     }
 
     void on_event(const SDL_Event& e, const EngineContext& eng, const FrameContext* f) override { cam_.handle_event(e, &eng, f); }
@@ -123,7 +120,7 @@ public:
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO}; ri.renderArea={{0,0}, f.extent}; ri.layerCount=1; ri.colorAttachmentCount=1; ri.pColorAttachments=&ca; ri.pDepthAttachment = depth? &da : nullptr;
         vkCmdBeginRendering(cmd, &ri);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_);
-        VkViewport vp{}; vp.x=0; vp.y=0; vp.width=float(f.extent.width); vp.height=float(f.extent.height); vp.minDepth=0.0f; vp.maxDepth=1.0f; VkRect2D sc{{0,0}, f.extent};
+        VkViewport vp{}; vp.x=0; vp.y=0; vp.width=static_cast<float>(f.extent.width); vp.height=static_cast<float>(f.extent.height); vp.minDepth=0.0f; vp.maxDepth=1.0f; VkRect2D sc{{0,0}, f.extent};
         vkCmdSetViewport(cmd, 0, 1, &vp); vkCmdSetScissor(cmd, 0, 1, &sc);
 
         // push MVP

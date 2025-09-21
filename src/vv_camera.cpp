@@ -4,11 +4,11 @@
 #include <fstream>
 #include <sstream>
 #include <imgui.h>
+#include <numbers>
 
 namespace vv {
 
-static inline float deg2rad(float d) { return d * 3.14159265358979323846f / 180.0f; }
-static inline float rad2deg(float r) { return r * 180.0f / 3.14159265358979323846f; }
+static constexpr float deg2rad(float d) noexcept { return d * std::numbers::pi_v<float> / 180.0f; }
 
 float3 make_float3(float x, float y, float z) { return float3{x,y,z}; }
 float3 operator+(const float3& a, const float3& b) { return {a.x+b.x, a.y+b.y, a.z+b.z}; }
@@ -76,8 +76,8 @@ bool project_to_screen(const float3& p_world, const float4x4& view, const float4
     float cx, cy, cz, cw; mul_v(proj, vx,vy,vz,vw, cx,cy,cz,cw);
     if (cw <= 0.0f) return false;
     const float ndc_x = cx / cw; const float ndc_y = cy / cw; // ignore z
-    out_x = (ndc_x * 0.5f + 0.5f) * float(screen_w);
-    out_y = (1.0f - (ndc_y * 0.5f + 0.5f)) * float(screen_h); // flip Y for top-left origin
+    out_x = (ndc_x * 0.5f + 0.5f) * static_cast<float>(screen_w);
+    out_y = (1.0f - (ndc_y * 0.5f + 0.5f)) * static_cast<float>(screen_h); // flip Y for top-left origin
     return true;
 }
 
@@ -105,7 +105,7 @@ void CameraService::recompute_cached_() {
         view_ = make_look_at(eye, eye + fwd, {0,1,0});
     }
 
-    const float aspect = std::max(1, vp_w_) / float(std::max(1, vp_h_));
+    const float aspect = std::max(1, vp_w_) / static_cast<float>(std::max(1, vp_h_));
     if (state_.projection == CameraProjection::Perspective) {
         proj_ = make_perspective(deg2rad(std::max(1.0f, state_.fov_y_deg)), aspect, std::max(1e-5f, state_.znear), std::max(state_.znear+1e-4f, state_.zfar));
     } else {
@@ -126,7 +126,7 @@ void CameraService::update(double dt, int viewport_w, int viewport_h) {
         float speed = 2.0f; // meters per second
         if (key_shift_) speed *= 3.5f;
         if (key_ctrl_)  speed *= 0.25f;
-        float move = speed * float(dt) * state_.units_per_meter; // scale by world units per meter
+        float move = speed * static_cast<float>(dt) * state_.units_per_meter; // scale by world units per meter
         const float yaw = deg2rad(state_.fly_yaw_deg);
         const float pitch = deg2rad(state_.fly_pitch_deg);
         float3 fwd{ std::cos(pitch)*std::cos(yaw), std::sin(pitch), std::cos(pitch)*std::sin(yaw) };
@@ -142,7 +142,7 @@ void CameraService::update(double dt, int viewport_w, int viewport_h) {
 
     // Animation blending
     if (anim_active_) {
-        anim_t_ += float(dt);
+        anim_t_ += static_cast<float>(dt);
         float t = std::clamp(anim_t_ / std::max(1e-3f, anim_dur_), 0.0f, 1.0f);
         auto lerp = [](float a, float b, float t){ return a + (b-a)*t; };
         CameraState cur = anim_from_;
@@ -154,7 +154,7 @@ void CameraService::update(double dt, int viewport_w, int viewport_h) {
         // yaw/pitch shortest path wrap
         auto lerp_angle = [](float a, float b, float t){ float d = std::fmod(b - a + 540.0f, 360.0f) - 180.0f; return a + d * t; };
         cur.yaw_deg = lerp_angle(anim_from_.yaw_deg, anim_to_.yaw_deg, t);
-        cur.pitch_deg = lerp(anim_from_.pitch_deg, anim_to_.pitch_deg, t);
+        cur.pitch_deg = lerp_angle(anim_from_.pitch_deg, anim_to_.pitch_deg, t);
         cur.eye = anim_from_.eye * (1.0f - t) + anim_to_.eye * t;
         cur.fly_yaw_deg = lerp_angle(anim_from_.fly_yaw_deg, anim_to_.fly_yaw_deg, t);
         cur.fly_pitch_deg = lerp(anim_from_.fly_pitch_deg, anim_to_.fly_pitch_deg, t);
@@ -212,7 +212,7 @@ void CameraService::update_orbit_drag_(int mx, int my, bool pan) {
     const int dx = mx - last_mx_; const int dy = my - last_my_;
     last_mx_ = mx; last_my_ = my;
     if (!pan) {
-        const float sens = 0.25f; // deg per pixel
+        constexpr float sens = 0.25f; // deg per pixel
         state_.yaw_deg   += dx * sens; yaw_vel_ = dx * sens * 10.0f; // amplify for inertia
         state_.pitch_deg += dy * sens; pitch_vel_ = dy * sens * 10.0f;
         state_.pitch_deg = std::clamp(state_.pitch_deg, -89.5f, 89.5f);
@@ -229,7 +229,7 @@ void CameraService::end_orbit_() {}
 
 void CameraService::begin_fly_(int mx, int my, const EngineContext*) { last_mx_ = mx; last_my_ = my; fly_capturing_ = true; }
 void CameraService::update_fly_look_(int dx, int dy) {
-    const float sens = 0.15f; // deg per pixel
+    constexpr float sens = 0.15f; // deg per pixel
     state_.fly_yaw_deg   += dx * sens;
     state_.fly_pitch_deg += dy * sens;
     state_.fly_pitch_deg  = std::clamp(state_.fly_pitch_deg, -89.0f, 89.0f);
@@ -237,14 +237,14 @@ void CameraService::update_fly_look_(int dx, int dy) {
 void CameraService::end_fly_(const EngineContext*) { fly_capturing_ = false; }
 
 void CameraService::apply_inertia_(double dt) {
-    const float damp = std::exp(-float(dt) * 6.0f);
+    const float damp = std::exp(-static_cast<float>(dt) * 6.0f);
     if (!(rmb_ || mmb_) && state_.mode == CameraMode::Orbit) {
-        state_.yaw_deg   += yaw_vel_ * float(dt);
-        state_.pitch_deg += pitch_vel_ * float(dt);
+        state_.yaw_deg   += yaw_vel_ * static_cast<float>(dt);
+        state_.pitch_deg += pitch_vel_ * static_cast<float>(dt);
         state_.pitch_deg = std::clamp(state_.pitch_deg, -89.5f, 89.5f);
-        state_.target.x  += pan_x_vel_ * float(dt);
-        state_.target.y  += pan_y_vel_ * float(dt);
-        state_.distance  *= (1.0f + zoom_vel_ * float(dt));
+        state_.target.x  += pan_x_vel_ * static_cast<float>(dt);
+        state_.target.y  += pan_y_vel_ * static_cast<float>(dt);
+        state_.distance  *= (1.0f + zoom_vel_ * static_cast<float>(dt));
         yaw_vel_ *= damp; pitch_vel_ *= damp; pan_x_vel_ *= damp; pan_y_vel_ *= damp; zoom_vel_ *= damp;
     }
 }
@@ -280,7 +280,7 @@ void CameraService::handle_event(const SDL_Event& e, const EngineContext* eng, c
         break; }
     case SDL_EVENT_MOUSE_WHEEL: {
         if (imgui_capturing_mouse()) break;
-        const float scroll = float(e.wheel.y);
+        const float scroll = static_cast<float>(e.wheel.y);
         if (state_.mode == CameraMode::Orbit) {
             float z = std::exp(-scroll * 0.1f * (key_shift_ ? 2.0f : 1.0f));
             state_.distance = std::clamp(state_.distance * z, 1e-4f, 1e6f);
@@ -330,9 +330,6 @@ bool CameraService::recall_bookmark(std::string_view name, bool animate, float d
     return false;
 }
 
-// Minimal JSON writer/reader for CameraState
-static void json_write_string(std::ostringstream& oss, std::string_view s){ oss << '"'; for(char c: s){ if(c=='"'||c=='\\') oss << '\\' << c; else oss << c; } oss << '"'; }
-
 bool CameraService::save_to_file(const std::string& path) const {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
@@ -363,8 +360,8 @@ static float json_read_number(std::string_view s, size_t& pos){ while(pos<s.size
 bool CameraService::load_from_file(const std::string& path) {
     std::ifstream f(path, std::ios::binary); if (!f) return false; std::stringstream buf; buf << f.rdbuf(); std::string s = buf.str(); size_t p = 0;
     CameraState ns = state_;
-    if (json_seek(s, "\"mode\"", p)) { float v = json_read_number(s, p); ns.mode = (int(v)==0)? CameraMode::Orbit : CameraMode::Fly; }
-    if (json_seek(s, "\"projection\"", p)) { float v = json_read_number(s, p); ns.projection = (int(v)==0)? CameraProjection::Perspective : CameraProjection::Orthographic; }
+    if (json_seek(s, "\"mode\"", p)) { float v = json_read_number(s, p); ns.mode = (static_cast<int>(v)==0)? CameraMode::Orbit : CameraMode::Fly; }
+    if (json_seek(s, "\"projection\"", p)) { float v = json_read_number(s, p); ns.projection = (static_cast<int>(v)==0)? CameraProjection::Perspective : CameraProjection::Orthographic; }
     if (json_seek(s, "\"units_per_meter\"", p)) ns.units_per_meter = json_read_number(s, p);
     if (json_seek(s, "\"target\"", p)) { ns.target.x = json_read_number(s,p); ns.target.y = json_read_number(s,p); ns.target.z = json_read_number(s,p); }
     if (json_seek(s, "\"distance\"", p)) ns.distance = json_read_number(s,p);
@@ -383,15 +380,16 @@ bool CameraService::load_from_file(const std::string& path) {
 
 void CameraService::imgui_panel(bool* p_open) {
     if (!ImGui::Begin("Camera", p_open)) { ImGui::End(); return; }
-    int mode = (state_.mode == CameraMode::Orbit) ? 0 : 1;
-    if (ImGui::RadioButton("Orbit", mode==0)) { mode=0; set_mode(CameraMode::Orbit); }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Fly", mode==1))   { mode=1; set_mode(CameraMode::Fly); }
 
-    int proj = (state_.projection == CameraProjection::Perspective) ? 0 : 1;
-    if (ImGui::RadioButton("Perspective", proj==0)) { proj=0; set_projection(CameraProjection::Perspective); }
+    const bool isOrbit = (state_.mode == CameraMode::Orbit);
+    if (ImGui::RadioButton("Orbit", isOrbit)) { set_mode(CameraMode::Orbit); }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Orthographic", proj==1)) { proj=1; set_projection(CameraProjection::Orthographic); }
+    if (ImGui::RadioButton("Fly", !isOrbit))   { set_mode(CameraMode::Fly); }
+
+    const bool isPersp = (state_.projection == CameraProjection::Perspective);
+    if (ImGui::RadioButton("Perspective", isPersp)) { set_projection(CameraProjection::Perspective); }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Orthographic", !isPersp)) { set_projection(CameraProjection::Orthographic); }
 
     ImGui::SeparatorText("Params");
     ImGui::DragFloat("FOV Y (deg)", &state_.fov_y_deg, 0.1f, 10.0f, 120.0f);
@@ -416,7 +414,7 @@ void CameraService::imgui_panel(bool* p_open) {
     ImGui::InputText("Name", namebuf, sizeof(namebuf));
     ImGui::SameLine(); if (ImGui::Button("Add")) { add_bookmark(namebuf); namebuf[0] = '\0'; }
     for (size_t i = 0; i < bookmarks_.size(); ++i) {
-        ImGui::PushID(int(i));
+        ImGui::PushID(static_cast<int>(i));
         ImGui::TextUnformatted(bookmarks_[i].name.c_str());
         ImGui::SameLine(); if (ImGui::Button("Recall")) { recall_bookmark(bookmarks_[i].name, true, 0.6f); }
         ImGui::SameLine(); if (ImGui::Button("X")) { remove_bookmark(bookmarks_[i].name); ImGui::PopID(); break; }
@@ -426,8 +424,8 @@ void CameraService::imgui_panel(bool* p_open) {
     ImGui::SeparatorText("IO");
     static char pathbuf[260] = "camera.json";
     ImGui::InputText("File", pathbuf, sizeof(pathbuf));
-    if (ImGui::Button("Save")) { save_to_file(pathbuf); }
-    ImGui::SameLine(); if (ImGui::Button("Load")) { load_from_file(pathbuf); }
+    if (ImGui::Button("Save")) { (void)save_to_file(pathbuf); }
+    ImGui::SameLine(); if (ImGui::Button("Load")) { (void)load_from_file(pathbuf); }
 
     ImGui::End();
 

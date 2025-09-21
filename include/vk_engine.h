@@ -175,7 +175,7 @@ public:
     [[nodiscard]] uint32_t width() const { return state_.width; }
     [[nodiscard]] uint32_t height() const { return state_.height; }
 #ifdef VV_ENABLE_HOTRELOAD
-    void add_hot_reload_watch_path(std::string path);
+    void add_hot_reload_watch_path(const std::string& path);
 #endif
 #ifdef VV_ENABLE_LOGGING
     void log_line(const std::string& s);
