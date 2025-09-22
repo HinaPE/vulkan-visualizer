@@ -1,0 +1,21 @@
+#version 460
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+// p (R32F), velSrc (RG32F) -> velDst (RG32F)
+layout(binding=0, r32f) uniform image2D pressure;
+layout(binding=1, rg32f) uniform image2D velSrc;
+layout(binding=2, rg32f) uniform image2D velDst;
+
+layout(push_constant) uniform PC { float pad0; float W; float H; float pad1; } pc;
+
+float P(ivec2 p){ ivec2 q = clamp(p, ivec2(0), ivec2(int(pc.W)-1, int(pc.H)-1)); return imageLoad(pressure, q).x; }
+vec2 V(ivec2 p){ ivec2 q = clamp(p, ivec2(0), ivec2(int(pc.W)-1, int(pc.H)-1)); return imageLoad(velSrc, q).xy; }
+
+void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy); if (gid.x>=int(pc.W) || gid.y>=int(pc.H)) return;
+    float l = P(gid + ivec2(-1,0));
+    float r = P(gid + ivec2( 1,0));
+    float b = P(gid + ivec2(0,-1));
+    float t = P(gid + ivec2(0, 1));
+    vec2 grad = vec2(r - l, t - b) * 0.5;
+    vec2 v = V(gid) - grad;
+    imageStore(velDst, gid, vec4(v,0,0));
+}

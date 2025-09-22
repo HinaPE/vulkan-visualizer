@@ -1,0 +1,24 @@
+#version 460
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+// vel (RG32F), src (R32F) -> dst (R32F)
+layout(binding=0, rg32f) uniform image2D velField;
+layout(binding=1, r32f) uniform image2D srcField;
+layout(binding=2, r32f) uniform image2D dstField;
+
+layout(push_constant) uniform PC { float dt; float W; float H; float diss; } pc;
+
+float fetch(ivec2 p){ ivec2 q = clamp(p, ivec2(0), ivec2(int(pc.W)-1, int(pc.H)-1)); return imageLoad(srcField, q).x; }
+vec2 vel(ivec2 p){ ivec2 q = clamp(p, ivec2(0), ivec2(int(pc.W)-1, int(pc.H)-1)); return imageLoad(velField, q).xy; }
+
+void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy); if (gid.x>=int(pc.W) || gid.y>=int(pc.H)) return;
+    vec2 v = vel(gid);
+    vec2 pos = vec2(gid) - pc.dt * v; // backtrace in pixel space
+    vec2 p0 = floor(pos); vec2 f = clamp(pos - p0, vec2(0), vec2(1)); ivec2 i0 = ivec2(p0);
+    float a = fetch(i0);
+    float b = fetch(i0 + ivec2(1,0));
+    float c = fetch(i0 + ivec2(0,1));
+    float d = fetch(i0 + ivec2(1,1));
+    float adv = mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+    adv *= pc.diss;
+    imageStore(dstField, gid, vec4(adv,0,0,0));
+}

@@ -1,0 +1,37 @@
+#version 460
+layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
+// vel (RGBA32F xyz used), src (R32F) -> dst (R32F)
+layout(binding=0, rgba32f) uniform image3D velField;
+layout(binding=1, r32f) uniform image3D srcField;
+layout(binding=2, r32f) uniform image3D dstField;
+
+layout(push_constant) uniform PC { float dt; float W; float H; float D; float diss; float _p1; float _p2; float _p3; } pc;
+
+vec3 V(ivec3 p){ ivec3 s=imageSize(velField); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(velField, q).xyz; }
+float S(ivec3 p){ ivec3 s=imageSize(srcField); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(srcField, q).x; }
+
+float trilerpS(vec3 pos){ vec3 p0=floor(pos); vec3 f=clamp(pos-p0, vec3(0), vec3(1)); ivec3 i0=ivec3(p0);
+    float c000=S(i0);
+    float c100=S(i0+ivec3(1,0,0));
+    float c010=S(i0+ivec3(0,1,0));
+    float c110=S(i0+ivec3(1,1,0));
+    float c001=S(i0+ivec3(0,0,1));
+    float c101=S(i0+ivec3(1,0,1));
+    float c011=S(i0+ivec3(0,1,1));
+    float c111=S(i0+ivec3(1,1,1));
+    float c00=mix(c000,c100,f.x);
+    float c10=mix(c010,c110,f.x);
+    float c01=mix(c001,c101,f.x);
+    float c11=mix(c011,c111,f.x);
+    float c0=mix(c00,c10,f.y);
+    float c1=mix(c01,c11,f.y);
+    return mix(c0,c1,f.z);
+}
+
+void main(){ ivec3 gid=ivec3(gl_GlobalInvocationID.xyz); if (gid.x>=int(pc.W)||gid.y>=int(pc.H)||gid.z>=int(pc.D)) return;
+    vec3 v=V(gid);
+    vec3 pos = vec3(gid) - pc.dt * v;
+    float adv = trilerpS(pos) * pc.diss;
+    imageStore(dstField, gid, vec4(adv,0,0,0));
+}
+

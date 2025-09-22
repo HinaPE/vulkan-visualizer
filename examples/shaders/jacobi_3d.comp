@@ -1,0 +1,24 @@
+#version 460
+layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
+// pSrc (R32F), divergence (R32F) -> pDst (R32F)
+layout(binding=0, r32f) uniform image3D pSrc;
+layout(binding=1, r32f) uniform image3D divergence;
+layout(binding=2, r32f) uniform image3D pDst;
+
+layout(push_constant) uniform PC { float pad0; float W; float H; float D; float pad1; float _p2; float _p3; float _p4; } pc;
+
+float P(ivec3 p){ ivec3 s=imageSize(pSrc); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(pSrc, q).x; }
+float Div(ivec3 p){ ivec3 s=imageSize(divergence); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(divergence, q).x; }
+
+void main(){ ivec3 gid=ivec3(gl_GlobalInvocationID.xyz); if (gid.x>=int(pc.W)||gid.y>=int(pc.H)||gid.z>=int(pc.D)) return;
+    float l = P(gid + ivec3(-1,0,0));
+    float r = P(gid + ivec3( 1,0,0));
+    float b = P(gid + ivec3(0,-1,0));
+    float t = P(gid + ivec3(0, 1,0));
+    float n = P(gid + ivec3(0,0,-1));
+    float f = P(gid + ivec3(0,0, 1));
+    float d = Div(gid);
+    float p = (l + r + b + t + n + f - d) / 6.0;
+    imageStore(pDst, gid, vec4(p,0,0,0));
+}
+

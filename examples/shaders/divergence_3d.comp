@@ -1,0 +1,21 @@
+#version 460
+layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
+// vel (RGBA32F xyz used) -> divergence (R32F)
+layout(binding=0, rgba32f) uniform image3D velField;
+layout(binding=1, r32f) uniform image3D outDiv;
+
+layout(push_constant) uniform PC { float pad0; float W; float H; float D; float pad1; float _p2; float _p3; float _p4; } pc;
+
+vec3 V(ivec3 p){ ivec3 s=imageSize(velField); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(velField, q).xyz; }
+
+void main(){ ivec3 gid = ivec3(gl_GlobalInvocationID.xyz); if (gid.x>=int(pc.W)||gid.y>=int(pc.H)||gid.z>=int(pc.D)) return;
+    float vl = V(gid + ivec3(-1,0,0)).x;
+    float vr = V(gid + ivec3( 1,0,0)).x;
+    float vb = V(gid + ivec3(0,-1,0)).y;
+    float vt = V(gid + ivec3(0, 1,0)).y;
+    float vn = V(gid + ivec3(0,0,-1)).z;
+    float vf = V(gid + ivec3(0,0, 1)).z;
+    float div = 0.5*(vr - vl) + 0.5*(vt - vb) + 0.5*(vf - vn);
+    imageStore(outDiv, gid, vec4(div,0,0,0));
+}
+

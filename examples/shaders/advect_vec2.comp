@@ -1,0 +1,22 @@
+#version 460
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+// src -> dst, RG32F
+layout(binding=0, rg32f) uniform image2D srcField;
+layout(binding=1, rg32f) uniform image2D dstField;
+
+layout(push_constant) uniform PC { float dt; float W; float H; float diss; } pc;
+
+vec2 fetchVec2(ivec2 p){ ivec2 q = clamp(p, ivec2(0), ivec2(int(pc.W)-1, int(pc.H)-1)); vec4 v = imageLoad(srcField, q); return v.xy; }
+
+void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy); if (gid.x>=int(pc.W) || gid.y>=int(pc.H)) return; vec2 uv = (vec2(gid)+0.5)/vec2(pc.W, pc.H); // backtrace
+    vec2 v = fetchVec2(gid); vec2 pos = vec2(gid) - pc.dt * v; // in grid space (pixels)
+    // Bilinear sample at pos
+    vec2 p0 = floor(pos); vec2 f = clamp(pos - p0, vec2(0), vec2(1)); ivec2 i0 = ivec2(p0);
+    vec2 a = fetchVec2(i0);
+    vec2 b = fetchVec2(i0 + ivec2(1,0));
+    vec2 c = fetchVec2(i0 + ivec2(0,1));
+    vec2 d = fetchVec2(i0 + ivec2(1,1));
+    vec2 adv = mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+    adv *= pc.diss;
+    imageStore(dstField, gid, vec4(adv,0,0));
+}

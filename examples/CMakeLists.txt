@@ -24,6 +24,22 @@ set(SHADERS
         sphere_impostor.frag
         cloth.vert
         cloth.frag
+        # ex11 stable fluids 2D
+        advect_vec2.comp
+        advect_scalar.comp
+        divergence.comp
+        jacobi.comp
+        gradient.comp
+        inject.comp
+        render_smoke.comp
+        # ex11 stable fluids 3D
+        advect_vec3_3d.comp
+        advect_scalar_3d.comp
+        divergence_3d.comp
+        jacobi_3d.comp
+        gradient_3d.comp
+        inject_3d.comp
+        render_volume_3d.comp
 )
 set(SPV_FILES)
 foreach (SH ${SHADERS})
@@ -70,3 +86,4 @@ add_vv_example(ex07_direct_to_swapchain ex07_direct_to_swapchain.cpp)
 add_vv_example(ex08_screenshot_workflow ex08_screenshot_workflow.cpp)
 add_vv_example(ex09_3dviewport ex09_3dviewport.cpp)
 add_vv_example(ex10_xpbd_cloth ex10_xpbd_cloth.cpp)
+add_vv_example(ex11_stable_fluids ex11_stable_fluids.cpp)

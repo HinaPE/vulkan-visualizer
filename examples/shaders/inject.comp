@@ -1,0 +1,27 @@
+#version 460
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+// vel (RG32F) + density (R32F) injection
+layout(binding=0, rg32f) uniform image2D velField;
+layout(binding=1, r32f) uniform image2D denField;
+
+// dt, force, cx, cy, radius, dirx, diry, pad
+layout(push_constant) uniform PC { float dt; float force; float cx; float cy; float radius; float dirx; float diry; float pad; } pc;
+
+void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(denField);
+    if (gid.x<0 || gid.y<0 || gid.x>=size.x || gid.y>=size.y) return;
+    vec2 p = vec2(gid);
+    vec2 c = vec2(pc.cx, pc.cy);
+    float r = pc.radius;
+    float d = length(p - c);
+    if (d <= r){
+        float w = 1.0 - (d / max(r, 1e-3));
+        // Add upward velocity and density
+        vec2 v = imageLoad(velField, gid).xy;
+        v += pc.force * pc.dt * w * normalize(vec2(pc.dirx, pc.diry));
+        imageStore(velField, gid, vec4(v,0,0));
+        float den = imageLoad(denField, gid).x;
+        den += 1.5 * pc.dt * w;
+        imageStore(denField, gid, vec4(den,0,0,0));
+    }
+}

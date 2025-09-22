@@ -1,0 +1,24 @@
+#version 460
+layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
+// pressure (R32F), velSrc (RGBA32F xyz), velDst (RGBA32F xyz)
+layout(binding=0, r32f) uniform image3D pressure;
+layout(binding=1, rgba32f) uniform image3D velSrc;
+layout(binding=2, rgba32f) uniform image3D velDst;
+
+layout(push_constant) uniform PC { float pad0; float W; float H; float D; float pad1; float _p2; float _p3; float _p4; } pc;
+
+float P(ivec3 p){ ivec3 s=imageSize(pressure); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(pressure, q).x; }
+vec3 V(ivec3 p){ ivec3 s=imageSize(velSrc); ivec3 q=clamp(p, ivec3(0), s-1); return imageLoad(velSrc, q).xyz; }
+
+void main(){ ivec3 gid=ivec3(gl_GlobalInvocationID.xyz); if (gid.x>=int(pc.W)||gid.y>=int(pc.H)||gid.z>=int(pc.D)) return;
+    float l = P(gid + ivec3(-1,0,0));
+    float r = P(gid + ivec3( 1,0,0));
+    float b = P(gid + ivec3(0,-1,0));
+    float t = P(gid + ivec3(0, 1,0));
+    float n = P(gid + ivec3(0,0,-1));
+    float f = P(gid + ivec3(0,0, 1));
+    vec3 grad = vec3(r - l, t - b, f - n) * 0.5;
+    vec3 v = V(gid) - grad;
+    imageStore(velDst, gid, vec4(v,0.0));
+}
+
