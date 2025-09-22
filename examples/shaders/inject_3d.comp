@@ -4,8 +4,8 @@ layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
 layout(binding=0, rgba32f) uniform image3D velField;
 layout(binding=1, r32f)    uniform image3D denField;
 
-// dt, force, cx, cy, cz, radius, dirx, dirz
-layout(push_constant) uniform PC { float dt; float force; float cx; float cy; float cz; float radius; float dirx; float dirz; } pc;
+// dt, force, cx, cy, cz, radius, dirx, diry, dirz
+layout(push_constant) uniform PC { float dt; float force; float cx; float cy; float cz; float radius; float dirx; float diry; float dirz; } pc;
 
 void main(){ ivec3 gid = ivec3(gl_GlobalInvocationID.xyz);
     ivec3 size = imageSize(denField);
@@ -18,7 +18,7 @@ void main(){ ivec3 gid = ivec3(gl_GlobalInvocationID.xyz);
         float w = 1.0 - (d / max(r, 1e-3));
         // Add directed velocity and density
         vec3 v = imageLoad(velField, gid).xyz;
-        vec3 dir = normalize(vec3(pc.dirx, 0.0, pc.dirz));
+        vec3 dir = normalize(vec3(pc.dirx, pc.diry, pc.dirz));
         v += pc.force * pc.dt * w * dir;
         imageStore(velField, gid, vec4(v,0));
         float den = imageLoad(denField, gid).x;
@@ -26,4 +26,3 @@ void main(){ ivec3 gid = ivec3(gl_GlobalInvocationID.xyz);
         imageStore(denField, gid, vec4(den,0,0,0));
     }
 }
-

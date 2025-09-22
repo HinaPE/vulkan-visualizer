@@ -24,15 +24,7 @@ set(SHADERS
         sphere_impostor.frag
         cloth.vert
         cloth.frag
-        # ex11 stable fluids 2D
-        advect_vec2.comp
-        advect_scalar.comp
-        divergence.comp
-        jacobi.comp
-        gradient.comp
-        inject.comp
-        render_smoke.comp
-        # ex11 stable fluids 3D
+        # ex11 stable fluids 3D only
         advect_vec3_3d.comp
         advect_scalar_3d.comp
         divergence_3d.comp

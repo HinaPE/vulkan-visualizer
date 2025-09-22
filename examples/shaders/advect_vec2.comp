@@ -20,3 +20,5 @@ void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy); if (gid.x>=int(pc.W) |
     adv *= pc.diss;
     imageStore(dstField, gid, vec4(adv,0,0));
 }
+
+// removed: superseded by 3D stable fluids implementation

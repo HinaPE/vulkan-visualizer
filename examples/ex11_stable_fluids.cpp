@@ -1,4 +1,5 @@
 #include "vk_engine.h"
+#include "vv_camera.h"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <cstdio>
@@ -21,7 +22,7 @@ class StableFluids final : public IRenderer {
 public:
     void get_capabilities(const EngineContext&, RendererCaps& c) override {
         c = RendererCaps{};
-        c.enable_imgui = false; // self-contained
+        c.enable_imgui = true; // allow camera overlays similar to ex10
         c.presentation_mode = PresentationMode::EngineBlit;
         c.color_attachments = { AttachmentRequest{ .name = "color", .format = VK_FORMAT_R8G8B8A8_UNORM, .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, .samples = VK_SAMPLE_COUNT_1_BIT, .aspect = VK_IMAGE_ASPECT_COLOR_BIT, .initial_layout = VK_IMAGE_LAYOUT_GENERAL } };
         c.presentation_attachment = "color";
@@ -31,14 +32,32 @@ public:
         eng_ = e; dev_ = e.device; alloc_ = e.allocator; da_ = e.descriptorAllocator;
         create_all(f0.extent);
         create_pipelines_();
+        // Setup camera like ex10 (orbit)
+        vv::CameraState s = cam_.state(); s.mode = vv::CameraMode::Orbit; s.target = { (float)sim_w_*0.5f, (float)sim_h_*0.5f, (float)sim_d_*0.5f }; s.distance = std::max({sim_w_,sim_h_,sim_d_}) * 1.6f; s.yaw_deg = -35.0f; s.pitch_deg = 25.0f; s.znear=0.01f; s.zfar = std::max({sim_w_,sim_h_,sim_d_})*5.0f; cam_.set_state(s);
+        vv::BoundingBox bb{ .min = {0,0,0}, .max = { (float)sim_w_, (float)sim_h_, (float)sim_d_ }, .valid = true }; cam_.set_scene_bounds(bb); cam_.frame_scene(1.08f);
     }
-    void on_swapchain_ready(const EngineContext& e, const FrameContext& f) override { (void)e; recreate_for_extent_(f.extent); }
+    void on_swapchain_ready(const EngineContext& e, const FrameContext& f) override { (void)e; recreate_for_extent_(f.extent); vv::BoundingBox bb{ .min = {0,0,0}, .max = { (float)sim_w_, (float)sim_h_, (float)sim_d_ }, .valid = true }; cam_.set_scene_bounds(bb); cam_.frame_scene(1.02f); }
     void on_swapchain_destroy(const EngineContext& e) override { (void)e; destroy_images_(); }
 
     void destroy(const EngineContext& e, const RendererCaps&) override {
         destroy_pipelines_();
         destroy_images_();
         eng_ = {}; dev_ = VK_NULL_HANDLE; alloc_ = nullptr; da_ = nullptr;
+    }
+
+    void update(const EngineContext&, const FrameContext& f) override {
+        cam_.update(f.dt_sec, (int)f.extent.width, (int)f.extent.height);
+    }
+
+    void on_event(const SDL_Event& e, const EngineContext& eng, const FrameContext* f) override {
+        cam_.handle_event(e, &eng, f);
+    }
+
+    void on_imgui(const EngineContext& eng, const FrameContext&) override {
+        auto* host = static_cast<vv_ui::TabsHost*>(eng.services);
+        if (!host) return;
+        host->add_overlay([this]{ cam_.imgui_draw_nav_overlay_space_tint(); });
+        host->add_overlay([this]{ cam_.imgui_draw_mini_axis_gizmo(); });
     }
 
     void record_compute(VkCommandBuffer cmd, const EngineContext&, const FrameContext& f) override {
@@ -83,12 +102,16 @@ public:
             vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PC), &pc);
         };
 
-        // Inject source (velocity + density) near bottom-center of volume
+        // Inject source (velocity + density) near bottom-center of volume, upward (+Y)
         {
             update_ds_inject_();
             barrier_img(velA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
             barrier_img(denA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
-            bind_and_push8(p_inject_, pl_inject_, ds_inject_, dt, force, (float)(W*0.5f), (float)(H*0.25f), (float)(D*0.5f), 18.0f, 0.0f, 1.0f);
+            // push constants: dt, force, cx, cy, cz, radius, dirx, diry, dirz
+            struct PCInject { float dt, force, cx, cy, cz, radius, dirx, diry, dirz; } pci{ dt, force, (float)(W*0.5f), 8.0f, (float)(D*0.5f), 18.0f, 0.0f, 1.0f, 0.0f };
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p_inject_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pl_inject_, 0, 1, &ds_inject_, 0, nullptr);
+            vkCmdPushConstants(cmd, pl_inject_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PCInject), &pci);
             uint32_t gx=(W+7)/8, gy=(H+7)/8, gz=(D+7)/8; vkCmdDispatch(cmd,gx,gy,gz);
         }
 
@@ -157,16 +180,38 @@ public:
             std::swap(denA_, denB_);
         }
 
-        // Render: simple raymarch along +Z through density volume
+        // Render with camera raymarch
         if (!f.color_attachments.empty()){
             const auto& color = f.color_attachments.front();
             update_ds_render_(color);
             barrier_img(color.image, color.aspect, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
             barrier_img(denA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+            // Build camera params
+            auto st = cam_.state();
+            auto eye = cam_.eye_position();
+            auto worldUp = vv::make_float3(0,1,0);
+            vv::float3 fwd{}; if (st.mode==vv::CameraMode::Orbit) { vv::float3 toT = vv::make_float3(st.target.x - eye.x, st.target.y - eye.y, st.target.z - eye.z); fwd = vv::normalize(toT); } else {
+                float yaw = st.fly_yaw_deg * 3.1415926535f/180.0f; float pitch = st.fly_pitch_deg * 3.1415926535f/180.0f;
+                fwd = vv::make_float3(std::cos(pitch)*std::cos(yaw), std::sin(pitch), std::cos(pitch)*std::sin(yaw));
+            }
+            vv::float3 right = vv::normalize(vv::cross(fwd, worldUp));
+            vv::float3 up = vv::normalize(vv::cross(right, fwd));
+            float aspect = (f.extent.height>0)? (float)f.extent.width/(float)f.extent.height : 1.777f;
+            float tanHalfFovY = std::tan((st.fov_y_deg * 3.1415926535f/180.0f)*0.5f);
+            struct PCR {
+                float camEye[3]; float tanHalfFovY;
+                float camRight[3]; float aspect;
+                float camUp[3]; float steps;
+                float camFwd[3]; float W;
+                float H; float D; float pad0; float pad1;
+            } pc{};
+            pc.camEye[0]=eye.x; pc.camEye[1]=eye.y; pc.camEye[2]=eye.z; pc.tanHalfFovY=tanHalfFovY;
+            pc.camRight[0]=right.x; pc.camRight[1]=right.y; pc.camRight[2]=right.z; pc.aspect=aspect;
+            pc.camUp[0]=up.x; pc.camUp[1]=up.y; pc.camUp[2]=up.z; pc.steps=(float)std::min<uint32_t>(D, 256);
+            pc.camFwd[0]=fwd.x; pc.camFwd[1]=fwd.y; pc.camFwd[2]=fwd.z; pc.W=(float)W; pc.H=(float)H; pc.D=(float)D; pc.pad0=0; pc.pad1=0;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p_render_);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pl_render_, 0, 1, &ds_render_, 0, nullptr);
-            struct PC{ float vw,vh, W,H, D, steps; } pc{ (float)f.extent.width, (float)f.extent.height, (float)W, (float)H, (float)D, (float)D };
-            vkCmdPushConstants(cmd, pl_render_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PC), &pc);
+            vkCmdPushConstants(cmd, pl_render_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PCR), &pc);
             uint32_t gx=(f.extent.width+15)/16, gy=(f.extent.height+15)/16; vkCmdDispatch(cmd,gx,gy,1);
         }
     }
@@ -175,6 +220,7 @@ public:
 
 private:
     EngineContext eng_{}; VkDevice dev_{VK_NULL_HANDLE}; VmaAllocator alloc_{}; DescriptorAllocator* da_{};
+    vv::CameraService cam_{};
 
     // sim resources
     uint32_t sim_w_{0}, sim_h_{0}, sim_d_{0}; bool images_ready_{false}; bool images_initialized_{false}; bool clear_pressure_{true};
@@ -257,8 +303,8 @@ private:
         pl_divergence_    = mkpl(dsl_divergence_,    32);
         pl_jacobi_        = mkpl(dsl_jacobi_,        32);
         pl_gradient_      = mkpl(dsl_gradient_,      32);
-        pl_inject_        = mkpl(dsl_inject_,        32);
-        pl_render_        = mkpl(dsl_render_,        24);
+        pl_inject_        = mkpl(dsl_inject_,        48); // 9 floats = 36 bytes, round up
+        pl_render_        = mkpl(dsl_render_,        80); // matches render_volume_3d PC size
         // Pipelines
         auto mkp = [&](VkShaderModule sm, VkPipelineLayout pl){ VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}; st.stage=VK_SHADER_STAGE_COMPUTE_BIT; st.module=sm; st.pName="main"; ci.stage=st; ci.layout=pl; VkPipeline p{}; VK_CHECK(vkCreateComputePipelines(dev_, VK_NULL_HANDLE, 1, &ci, nullptr, &p)); return p; };
         p_advect_vec_    = mkp(sm_advect_vec_,    pl_advect_vec_);

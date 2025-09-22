@@ -4,36 +4,57 @@ layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
 layout(binding=0, r32f)  uniform image3D density;
 layout(binding=1, rgba8) uniform image2D outColor;
 
-// vw, vh, W, H, D, steps
-layout(push_constant) uniform PC { float vw; float vh; float W; float H; float D; float steps; } pc;
+// Push constants: camera and volume params
+layout(push_constant) uniform PC {
+    vec3 camEye; float tanHalfFovY;
+    vec3 camRight; float aspect;
+    vec3 camUp; float steps;
+    vec3 camFwd; float W;
+    float H; float D; float pad0; float pad1;
+} pc;
 
-float den(ivec3 p){ ivec3 s = imageSize(density); ivec3 q = clamp(p, ivec3(0), s-1); return imageLoad(density, q).x; }
+float sampleDen(ivec3 p){ ivec3 s = imageSize(density); ivec3 q = clamp(p, ivec3(0), s-1); return imageLoad(density, q).x; }
+
+bool intersectAABB(vec3 ro, vec3 rd, vec3 mn, vec3 mx, out float t0, out float t1){
+    vec3 inv = 1.0 / max(abs(rd), vec3(1e-6)) * sign(rd);
+    vec3 tmin = (mn - ro) * inv;
+    vec3 tmax = (mx - ro) * inv;
+    vec3 tsmn = min(tmin, tmax);
+    vec3 tsmx = max(tmin, tmax);
+    t0 = max(max(tsmn.x, tsmn.y), tsmn.z);
+    t1 = min(min(tsmx.x, tsmx.y), tsmx.z);
+    return t1 >= max(t0, 0.0);
+}
 
 void main(){ ivec2 gid = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(outColor); if (any(greaterThanEqual(gid, sz)) || any(lessThan(gid, ivec2(0)))) return;
-    // Map screen pixel to volume X,Y
+    // NDC
     vec2 uv = (vec2(gid) + 0.5) / vec2(sz);
-    vec3 pos = vec3(uv.x * pc.W, uv.y * pc.H, 0.0);
-    // Raymarch forward in +Z
-    int N = int(max(1.0, pc.steps));
-    float stepZ = max(pc.D / float(N), 1.0);
+    float x = (uv.x * 2.0 - 1.0);
+    float y = (uv.y * 2.0 - 1.0);
+    // Build ray in world
+    vec3 rd = normalize(pc.camFwd + x * pc.aspect * pc.tanHalfFovY * pc.camRight + y * pc.tanHalfFovY * pc.camUp);
+    vec3 ro = pc.camEye;
+    // Volume AABB in world (volume space units)
+    vec3 vmin = vec3(0.0, 0.0, 0.0);
+    vec3 vmax = vec3(pc.W, pc.H, pc.D);
+    float t0, t1; if (!intersectAABB(ro, rd, vmin, vmax, t0, t1)) { imageStore(outColor, gid, vec4(0,0,0,1)); return; }
+    float N = max(pc.steps, 1.0);
+    float dt = max(length(vmax - vmin) / N, 1.0);
+    float t = max(t0, 0.0);
     vec3 accum = vec3(0.0);
     float alpha = 0.0;
-    float sigma = 0.06; // absorption/scatter coefficient
-    for (int i=0;i<N && alpha<0.995;i++){
-        float d = den(ivec3(pos));
-        // Simple alpha from density
+    const float sigma = 0.06;
+    for (int i=0; i<1024 && t<=t1 && alpha < 0.995; ++i){
+        vec3 pos = ro + t * rd;
+        float d = sampleDen(ivec3(pos));
         float a = 1.0 - exp(-d * sigma);
         vec3 col = vec3(d);
-        // front-to-back compositing
         col = col * (1.0 - alpha) * a;
         accum += col;
         alpha += (1.0 - alpha) * a;
-        pos.z += stepZ;
-        if (pos.z >= pc.D) break;
+        t += dt;
     }
-    // tone-map and tint
     vec3 color = accum / (1.0 + accum);
     color *= vec3(0.9, 0.95, 1.0);
     imageStore(outColor, gid, vec4(color, 1.0));
 }
-
