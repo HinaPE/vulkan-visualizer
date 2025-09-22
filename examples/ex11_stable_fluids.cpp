@@ -106,9 +106,10 @@ public:
         {
             update_ds_inject_();
             barrier_img(velA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
+            barrier_img(velB_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
             barrier_img(denA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
             // push constants: dt, force, cx, cy, cz, radius, dirx, diry, dirz
-            struct PCInject { float dt, force, cx, cy, cz, radius, dirx, diry, dirz; } pci{ dt, force, (float)(W*0.5f), 8.0f, (float)(D*0.5f), 18.0f, 0.0f, 1.0f, 0.0f };
+            struct PCInject { float dt, force, cx, cy, cz, radius, dirx, diry, dirz; } pci{ dt, force, (float)(W*0.5f), 6.0f, (float)(D*0.5f), 12.0f, 0.0f, 1.0f, 0.0f };
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p_inject_);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pl_inject_, 0, 1, &ds_inject_, 0, nullptr);
             vkCmdPushConstants(cmd, pl_inject_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PCInject), &pci);
@@ -117,7 +118,7 @@ public:
 
         // Advect velocity: velA -> velB
         {
-            update_ds_advect_vec_(velA_, velB_, diss_vel);
+            update_ds_advect_vec_();
             barrier_img(velA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             barrier_img(velB_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_ACCESS_2_SHADER_WRITE_BIT);
             bind_and_push8(p_advect_vec_, pl_advect_vec_, ds_advect_vec_, dt, (float)W, (float)H, (float)D, diss_vel, 0,0,0);
@@ -145,8 +146,8 @@ public:
 
         // Jacobi iterations to solve Poisson: pA <-> pB
         {
-            update_ds_jacobi_(pA_, pB_);
-            const int iters = 30;
+            update_ds_jacobi_();
+            const int iters = 10;
             for(int i=0;i<iters;++i){
                 barrier_img(pA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
                 barrier_img(div_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
@@ -154,13 +155,13 @@ public:
                 bind_and_push8(p_jacobi_, pl_jacobi_, ds_jacobi_, 0,(float)W,(float)H,(float)D,0,0,0,0);
                 uint32_t gx=(W+7)/8, gy=(H+7)/8, gz=(D+7)/8; vkCmdDispatch(cmd,gx,gy,gz);
                 std::swap(pA_, pB_);
-                update_ds_jacobi_(pA_, pB_);
+                update_ds_jacobi_();
             }
         }
 
         // Subtract gradient: velA - grad(pA) -> velB, then swap
         {
-            update_ds_gradient_(pA_, velA_, velB_);
+            update_ds_gradient_();
             barrier_img(pA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             barrier_img(velA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             barrier_img(velB_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_ACCESS_2_SHADER_WRITE_BIT);
@@ -171,7 +172,7 @@ public:
 
         // Advect density: denA -> denB, using velA
         {
-            update_ds_advect_scalar_(velA_, denA_, denB_, diss_den);
+            update_ds_advect_scalar_();
             barrier_img(velA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             barrier_img(denA_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             barrier_img(denB_.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_ACCESS_2_SHADER_WRITE_BIT);
@@ -207,7 +208,7 @@ public:
             } pc{};
             pc.camEye[0]=eye.x; pc.camEye[1]=eye.y; pc.camEye[2]=eye.z; pc.tanHalfFovY=tanHalfFovY;
             pc.camRight[0]=right.x; pc.camRight[1]=right.y; pc.camRight[2]=right.z; pc.aspect=aspect;
-            pc.camUp[0]=up.x; pc.camUp[1]=up.y; pc.camUp[2]=up.z; pc.steps=(float)std::min<uint32_t>(D, 256);
+            pc.camUp[0]=up.x; pc.camUp[1]=up.y; pc.camUp[2]=up.z; pc.steps=(float)std::min<uint32_t>(D, 96);
             pc.camFwd[0]=fwd.x; pc.camFwd[1]=fwd.y; pc.camFwd[2]=fwd.z; pc.W=(float)W; pc.H=(float)H; pc.D=(float)D; pc.pad0=0; pc.pad1=0;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p_render_);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pl_render_, 0, 1, &ds_render_, 0, nullptr);
@@ -224,7 +225,8 @@ private:
 
     // sim resources
     uint32_t sim_w_{0}, sim_h_{0}, sim_d_{0}; bool images_ready_{false}; bool images_initialized_{false}; bool clear_pressure_{true};
-    Image3D velA_{}, velB_{}; // rgba32f (xyz used)
+    // Velocity stored as a single RGBA32F 3D image (xyz used), double-buffered
+    Image3D velA_{}, velB_{};
     Image3D denA_{}, denB_{}; // r32f
     Image3D pA_{}, pB_{};     // r32f
     Image3D div_{};           // r32f
@@ -239,12 +241,14 @@ private:
     void recreate_for_extent_(VkExtent2D e){ destroy_images_(); create_all(e); }
 
     void create_all(VkExtent2D e){
-        // pick sim grid ~ half resolution in X/Y, and a reasonable depth
-        sim_w_ = std::max(64u, e.width / 2u);
-        sim_h_ = std::max(64u, e.height/ 2u);
-        sim_d_ = std::max(64u, std::min(128u, e.height/2u));
+        // pick sim grid ~ quarter resolution in X/Y to avoid long compute, and moderate depth
+        sim_w_ = std::max(64u, e.width / 4u);
+        sim_h_ = std::max(64u, e.height/ 4u);
+        sim_d_ = std::max(32u, std::min(64u, e.height/4u));
+        // velocity
         create_image3D_(sim_w_, sim_h_, sim_d_, VK_FORMAT_R32G32B32A32_SFLOAT, velA_);
         create_image3D_(sim_w_, sim_h_, sim_d_, VK_FORMAT_R32G32B32A32_SFLOAT, velB_);
+        // scalars
         create_image3D_(sim_w_, sim_h_, sim_d_, VK_FORMAT_R32_SFLOAT, denA_);
         create_image3D_(sim_w_, sim_h_, sim_d_, VK_FORMAT_R32_SFLOAT, denB_);
         create_image3D_(sim_w_, sim_h_, sim_d_, VK_FORMAT_R32_SFLOAT, pA_);
@@ -255,7 +259,8 @@ private:
 
     void destroy_images_(){
         auto di=[&](Image3D& t){ if (!t.img) return; if (t.view) vkDestroyImageView(dev_, t.view, nullptr); vmaDestroyImage(alloc_, t.img, t.alloc); t = {}; };
-        di(velA_); di(velB_); di(denA_); di(denB_); di(pA_); di(pB_); di(div_);
+        di(velA_); di(velB_);
+        di(denA_); di(denB_); di(pA_); di(pB_); di(div_);
         images_ready_ = false; images_initialized_ = false; clear_pressure_ = true;
     }
 
@@ -269,13 +274,64 @@ private:
         out.extent = {w,h,d}; out.fmt = fmt;
     }
 
-    // Descriptor updates per pass (image3D)
-    void update_ds_advect_vec_(const Image3D& src, const Image3D& dst, float /*diss*/){ (void)0; VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=src.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=dst.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_advect_vec_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; vkUpdateDescriptorSets(dev_,2,w,0,nullptr); }
-    void update_ds_advect_scalar_(const Image3D& vel, const Image3D& src, const Image3D& dst, float /*diss*/){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=vel.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=src.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i2{.sampler=VK_NULL_HANDLE, .imageView=dst.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[3]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_advect_scalar_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; w[2]=w[0]; w[2].dstBinding=2; w[2].pImageInfo=&i2; vkUpdateDescriptorSets(dev_,3,w,0,nullptr);}
-    void update_ds_divergence_(){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=velA_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=div_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_divergence_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; vkUpdateDescriptorSets(dev_,2,w,0,nullptr);}
-    void update_ds_jacobi_(const Image3D& pSrc, const Image3D& pDst){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=pSrc.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=div_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i2{.sampler=VK_NULL_HANDLE, .imageView=pDst.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[3]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_jacobi_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; w[2]=w[0]; w[2].dstBinding=2; w[2].pImageInfo=&i2; vkUpdateDescriptorSets(dev_,3,w,0,nullptr);}
-    void update_ds_gradient_(const Image3D& p, const Image3D& velSrc, const Image3D& velDst){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=p.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=velSrc.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i2{.sampler=VK_NULL_HANDLE, .imageView=velDst.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[3]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_gradient_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; w[2]=w[0]; w[2].dstBinding=2; w[2].pImageInfo=&i2; vkUpdateDescriptorSets(dev_,3,w,0,nullptr);}
-    void update_ds_inject_(){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=velA_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=denA_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_inject_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; vkUpdateDescriptorSets(dev_,2,w,0,nullptr);}
+    // Descriptor updates per pass (image3D) matching shader bindings
+    void update_ds_advect_vec_(){
+        // advect_vec3_3d: binding 0 srcField (rgba32f), binding 1 dstField (rgba32f)
+        VkWriteDescriptorSet w[2]{};
+        VkDescriptorImageInfo src{.sampler=VK_NULL_HANDLE,.imageView=velA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo dst{.sampler=VK_NULL_HANDLE,.imageView=velB_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<2;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_advect_vec_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&src; w[1].dstBinding=1; w[1].pImageInfo=&dst;
+        vkUpdateDescriptorSets(dev_,2,w,0,nullptr);
+    }
+    void update_ds_advect_scalar_(){
+        // advect_scalar_3d: binding 0 velField (rgba32f), 1 src (r32f), 2 dst (r32f)
+        VkWriteDescriptorSet w[3]{};
+        VkDescriptorImageInfo v{.sampler=VK_NULL_HANDLE,.imageView=velA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo src{.sampler=VK_NULL_HANDLE,.imageView=denA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo dst{.sampler=VK_NULL_HANDLE,.imageView=denB_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<3;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_advect_scalar_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&v; w[1].dstBinding=1; w[1].pImageInfo=&src; w[2].dstBinding=2; w[2].pImageInfo=&dst;
+        vkUpdateDescriptorSets(dev_,3,w,0,nullptr);
+    }
+    void update_ds_divergence_(){
+        // divergence_3d: binding 0 velField (rgba32f), 1 outDiv (r32f)
+        VkWriteDescriptorSet w[2]{};
+        VkDescriptorImageInfo v{.sampler=VK_NULL_HANDLE,.imageView=velA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo out{.sampler=VK_NULL_HANDLE,.imageView=div_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<2;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_divergence_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&v; w[1].dstBinding=1; w[1].pImageInfo=&out;
+        vkUpdateDescriptorSets(dev_,2,w,0,nullptr);
+    }
+    void update_ds_jacobi_(){
+        // jacobi_3d: binding 0 pSrc (r32f), 1 divergence (r32f), 2 pDst (r32f)
+        VkWriteDescriptorSet w[3]{};
+        VkDescriptorImageInfo psrc{.sampler=VK_NULL_HANDLE,.imageView=pA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo divi{.sampler=VK_NULL_HANDLE,.imageView=div_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo pdst{.sampler=VK_NULL_HANDLE,.imageView=pB_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<3;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_jacobi_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&psrc; w[1].dstBinding=1; w[1].pImageInfo=&divi; w[2].dstBinding=2; w[2].pImageInfo=&pdst;
+        vkUpdateDescriptorSets(dev_,3,w,0,nullptr);
+    }
+    void update_ds_gradient_(){
+        // gradient_3d: binding 0 pressure (r32f), 1 velSrc (rgba32f), 2 velDst (rgba32f)
+        VkWriteDescriptorSet w[3]{};
+        VkDescriptorImageInfo p{.sampler=VK_NULL_HANDLE,.imageView=pA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo vs{.sampler=VK_NULL_HANDLE,.imageView=velA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo vd{.sampler=VK_NULL_HANDLE,.imageView=velB_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<3;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_gradient_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&p; w[1].dstBinding=1; w[1].pImageInfo=&vs; w[2].dstBinding=2; w[2].pImageInfo=&vd;
+        vkUpdateDescriptorSets(dev_,3,w,0,nullptr);
+    }
+    void update_ds_inject_(){
+        // inject_3d: binding 0 velField (rgba32f), 1 denField (r32f)
+        VkWriteDescriptorSet w[2]{};
+        VkDescriptorImageInfo v{.sampler=VK_NULL_HANDLE,.imageView=velA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo den{.sampler=VK_NULL_HANDLE,.imageView=denA_.view,.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+        for(int i=0;i<2;++i){ w[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[i].dstSet=ds_inject_; w[i].descriptorCount=1; w[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }
+        w[0].dstBinding=0; w[0].pImageInfo=&v; w[1].dstBinding=1; w[1].pImageInfo=&den;
+        vkUpdateDescriptorSets(dev_,2,w,0,nullptr);
+    }
     void update_ds_render_(const AttachmentView& color){ VkDescriptorImageInfo i0{.sampler=VK_NULL_HANDLE, .imageView=denA_.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkDescriptorImageInfo i1{.sampler=VK_NULL_HANDLE, .imageView=color.view, .imageLayout=VK_IMAGE_LAYOUT_GENERAL}; VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET},{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}}; w[0].dstSet=ds_render_; w[0].dstBinding=0; w[0].descriptorCount=1; w[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[0].pImageInfo=&i0; w[1]=w[0]; w[1].dstBinding=1; w[1].pImageInfo=&i1; vkUpdateDescriptorSets(dev_,2,w,0,nullptr);}
 
     void create_pipelines_(){
@@ -287,25 +343,29 @@ private:
         sm_gradient_     = make_shader(dev_, load_spv(d+"/gradient_3d.comp.spv"));
         sm_inject_       = make_shader(dev_, load_spv(d+"/inject_3d.comp.spv"));
         sm_render_       = make_shader(dev_, load_spv(d+"/render_volume_3d.comp.spv"));
-        // Create layouts
         auto mkdsl = [&](std::vector<VkDescriptorSetLayoutBinding> binds){ VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; ci.bindingCount=(uint32_t)binds.size(); ci.pBindings=binds.data(); VkDescriptorSetLayout l{}; VK_CHECK(vkCreateDescriptorSetLayout(dev_, &ci, nullptr, &l)); return l; };
-        dsl_advect_vec_    = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_advect_scalar_ = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_divergence_    = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_jacobi_        = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_gradient_      = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_inject_        = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        dsl_render_        = mkdsl({ {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr} });
-        // Pipeline layouts with push constants 32 bytes (we use up to 32)
+        // advect_vec3_3d: 2 images (src, dst)
+        dsl_advect_vec_    = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // advect_scalar_3d: 3 images (vel, src, dst)
+        dsl_advect_scalar_ = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {2,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // divergence_3d: 2 images (vel -> outDiv)
+        dsl_divergence_    = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // jacobi_3d: unchanged (pSrc, div, pDst)
+        dsl_jacobi_        = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {2,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // gradient_3d: 3 images (p, velSrc, velDst)
+        dsl_gradient_      = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {2,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // inject_3d: 2 images (vel, density)
+        dsl_inject_        = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
+        // render: unchanged (density, color)
+        dsl_render_        = mkdsl({ {0,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}, {1,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr} });
         auto mkpl = [&](VkDescriptorSetLayout dsl, uint32_t pcSize){ VkPushConstantRange pcr{VK_SHADER_STAGE_COMPUTE_BIT, 0, pcSize}; VkPipelineLayoutCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; ci.setLayoutCount=1; ci.pSetLayouts=&dsl; ci.pushConstantRangeCount=1; ci.pPushConstantRanges=&pcr; VkPipelineLayout l{}; VK_CHECK(vkCreatePipelineLayout(dev_, &ci, nullptr, &l)); return l; };
         pl_advect_vec_    = mkpl(dsl_advect_vec_,    32);
         pl_advect_scalar_ = mkpl(dsl_advect_scalar_, 32);
         pl_divergence_    = mkpl(dsl_divergence_,    32);
         pl_jacobi_        = mkpl(dsl_jacobi_,        32);
         pl_gradient_      = mkpl(dsl_gradient_,      32);
-        pl_inject_        = mkpl(dsl_inject_,        48); // 9 floats = 36 bytes, round up
-        pl_render_        = mkpl(dsl_render_,        80); // matches render_volume_3d PC size
-        // Pipelines
+        pl_inject_        = mkpl(dsl_inject_,        48);
+        pl_render_        = mkpl(dsl_render_,        80);
         auto mkp = [&](VkShaderModule sm, VkPipelineLayout pl){ VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}; st.stage=VK_SHADER_STAGE_COMPUTE_BIT; st.module=sm; st.pName="main"; ci.stage=st; ci.layout=pl; VkPipeline p{}; VK_CHECK(vkCreateComputePipelines(dev_, VK_NULL_HANDLE, 1, &ci, nullptr, &p)); return p; };
         p_advect_vec_    = mkp(sm_advect_vec_,    pl_advect_vec_);
         p_advect_scalar_ = mkp(sm_advect_scalar_, pl_advect_scalar_);
@@ -314,7 +374,6 @@ private:
         p_gradient_      = mkp(sm_gradient_,      pl_gradient_);
         p_inject_        = mkp(sm_inject_,        pl_inject_);
         p_render_        = mkp(sm_render_,        pl_render_);
-        // Allocate descriptor sets
         ds_advect_vec_    = da_->allocate(dev_, dsl_advect_vec_);
         ds_advect_scalar_ = da_->allocate(dev_, dsl_advect_scalar_);
         ds_divergence_    = da_->allocate(dev_, dsl_divergence_);
