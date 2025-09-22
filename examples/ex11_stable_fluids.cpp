@@ -8,6 +8,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
+#include <cmath>
 
 #ifndef VK_CHECK
 #define VK_CHECK(x) do{VkResult r=(x); if(r!=VK_SUCCESS) throw std::runtime_error("Vulkan error: "+std::to_string(r)); }while(false)
